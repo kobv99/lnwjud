@@ -3158,7 +3158,7 @@ function registeredToolSchema(tool: McpToolDefinition): Record<string, unknown> 
     id: tool.name,
     version: '1.0.0',
     permissions: [tool.permission],
-    streamable: /(?:page|context|map|stream|logs)/i.test(tool.name),
+    streamable: false,
     parallelSafe: tool.permission === 'READ' && tool.annotations.readOnlyHint && !tool.annotations.destructiveHint,
     source: 'mcp_registry',
     schema: inputSchema,
