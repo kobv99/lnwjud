@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
@@ -491,6 +491,77 @@ describe('DesktopRuntime persistence', () => {
       await runtime.close();
     }
   }, RUNTIME_TEST_TIMEOUT_MS);
+
+  it('routes explicit skill discovery to the requested registered workspace instead of the selected workspace', async () => {
+    const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-skill-routing-data-'));
+    const rawWorkspaceA = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-skill-routing-a-'));
+    const rawWorkspaceB = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-skill-routing-b-'));
+    temporaryRoots.push(rawDataRoot, rawWorkspaceA, rawWorkspaceB);
+    const dataRoot = await realpath(rawDataRoot);
+    const workspaceRootA = await realpath(rawWorkspaceA);
+    const workspaceRootB = await realpath(rawWorkspaceB);
+    for (const [workspaceRoot, name] of [
+      [workspaceRootA, 'desktop-a-skill'],
+      [workspaceRootB, 'desktop-b-skill'],
+    ] as const) {
+      const skillDir = path.join(workspaceRoot, '.agents', 'skills', name);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: workspace skill ${name}\n---\n# ${name}\n`, 'utf8');
+    }
+
+    const runtime = createDesktopRuntime(dataRoot);
+    try {
+      const workspaceA = await runtime.services.addWorkspace({ rootPath: workspaceRootA });
+      const workspaceB = await runtime.services.addWorkspace({ rootPath: workspaceRootB });
+      await runtime.services.selectWorkspace({ workspaceId: workspaceA.id });
+      const registry = new ToolRegistry(runtime.mcpServices, runtime.mcpActor);
+
+      const legacy = await registry.invoke('skills_list', { query: 'desktop-' });
+      expect(legacy.isError).not.toBe(true);
+      const legacySkills = (legacy.structuredContent as { skills?: readonly { name?: string }[] } | undefined)?.skills ?? [];
+      expect(legacySkills.map((skill) => skill.name)).toContain('desktop-a-skill');
+      expect(legacySkills.map((skill) => skill.name)).not.toContain('desktop-b-skill');
+
+      const explicit = await registry.invoke('skills_list', { query: 'desktop-', workspaceId: workspaceB.id });
+      expect(explicit.isError).not.toBe(true);
+      const explicitSkills = (explicit.structuredContent as { skills?: readonly { name?: string }[] } | undefined)?.skills ?? [];
+      expect(explicitSkills.map((skill) => skill.name)).toContain('desktop-b-skill');
+      expect(explicitSkills.map((skill) => skill.name)).not.toContain('desktop-a-skill');
+
+      const loaded = await registry.invoke('skills_read', {
+        workspaceId: workspaceB.id,
+        skillId: 'workspace-agents-skills/desktop-b-skill',
+      });
+      expect(loaded.isError).not.toBe(true);
+      expect(loaded.structuredContent).toMatchObject({
+        name: 'desktop-b-skill',
+        source: 'workspace-agents-skills',
+        trustTier: 'workspace',
+      });
+
+      const runGoal = await registry.invoke('run_goal', {
+        workspaceId: workspaceB.id,
+        goalKey: 'desktop-workspace-b-skill-preflight',
+        objective: 'Use desktop-b-skill to validate workspace skill preflight routing.',
+        scheduledContinuation: 'off',
+      });
+      expect(runGoal.isError).not.toBe(true);
+      expect(runGoal.structuredContent).toMatchObject({
+        goalKey: 'desktop-workspace-b-skill-preflight',
+        skillPreflight: {
+          status: 'loaded',
+          loadedSkills: [expect.objectContaining({
+            name: 'desktop-b-skill',
+            source: 'workspace-agents-skills',
+            trustTier: 'workspace',
+          })],
+        },
+      });
+    } finally {
+      await runtime.close();
+    }
+  }, RUNTIME_TEST_TIMEOUT_MS);
+
   it('persists AI delete and STDIO security policy settings and applies scoped delete dynamically', async () => {
     const rawDataRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-data-'));
     const rawWorkspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-runtime-policy-workspace-'));

@@ -528,7 +528,12 @@ export function createDesktopRuntime(dataPath: string, options: DesktopRuntimeOp
   const extensionsService: ExtensionsService = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
     settingsJsonProvider: () => settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
-    workspaceRootProvider: async (): Promise<string | undefined> => {
+    workspaceRootProvider: async (workspaceId?: string): Promise<string | undefined> => {
+      if (workspaceId !== undefined) {
+        const requested = await workspaceRepository.get(workspaceId);
+        if (requested === null || isMachineRootPath(requested.realRootPath) || isMachineRootPath(requested.rootPath)) return undefined;
+        return requested.realRootPath;
+      }
       const selected = await resolveSelectedWorkspace(workspaceService, settingsRepository);
       return selected?.realRootPath;
     },

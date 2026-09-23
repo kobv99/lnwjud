@@ -74,6 +74,19 @@ describe('durable goal MCP tools', () => {
     });
     expect(byName.get('checkpoint_goal')?.parse({
       goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
+      stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [],
+    })).toMatchObject({ ok: false });
+    expect(byName.get('checkpoint_goal')?.parse({
+      goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
+      stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: [],
+    })).toMatchObject({ ok: true });
+    expect(byName.get('checkpoint_goal')?.parse({
+      goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
+      stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: [],
+      trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }],
+    })).toMatchObject({ ok: true });
+    expect(byName.get('checkpoint_goal')?.parse({
+      goalId: 'goal-1', leaseToken: 'lease-token', expectedRevision: 1, currentPhase: 'verify', summary: 'check',
       stepUpdates: [], nextAction: 'continue', blockers: [], evidence: [], activeTaskIds: ['job-1'],
       trackedTasks: [{ taskId: 'job-1', provider: 'shell', role: 'blocking_job', cancelWithGoal: true }],
     })).toMatchObject({ ok: false });
@@ -152,7 +165,8 @@ describe('durable goal MCP tools', () => {
           },
         },
         extensions: {
-          async listSkills() {
+          async listSkills(input: { readonly workspaceId?: string }) {
+            expect(input.workspaceId).toBe('workspace-1');
             return ok({ skills: [
               {
                 id: 'claude-skills/diagnosing-bugs',
@@ -168,7 +182,8 @@ describe('durable goal MCP tools', () => {
               },
             ] });
           },
-          async readSkill(input: { readonly skillId: string }) {
+          async readSkill(input: { readonly skillId: string; readonly workspaceId?: string }) {
+            expect(input.workspaceId).toBe('workspace-1');
             return ok({
               id: input.skillId,
               name: 'diagnosing-bugs',
@@ -568,5 +583,17 @@ describe('durable goal MCP tools', () => {
     expect(runJsonSchema).toMatchObject({ type: 'object' });
     expect(JSON.stringify(runJsonSchema)).toContain('goalKey');
     expect(() => structuredClone(runJsonSchema)).not.toThrow();
+
+    const checkpointJsonSchema = registry.describeInputJsonSchema('checkpoint_goal');
+    expect(checkpointJsonSchema).toMatchObject({ anyOf: expect.any(Array) });
+    const checkpointVariants = (checkpointJsonSchema?.anyOf ?? []) as ReadonlyArray<{
+      readonly required?: readonly string[];
+      readonly properties?: Readonly<Record<string, { readonly maxItems?: number }>>;
+    }>;
+    expect(checkpointVariants.some((variant) => variant.required?.includes('activeTaskIds') === true)).toBe(true);
+    expect(checkpointVariants.some((variant) => variant.required?.includes('trackedTasks') === true)).toBe(true);
+    const trackedVariant = checkpointVariants.find((variant) => variant.required?.includes('trackedTasks') === true);
+    expect(trackedVariant?.properties?.activeTaskIds?.maxItems).toBe(0);
+    expect(() => structuredClone(checkpointJsonSchema)).not.toThrow();
   });
 });

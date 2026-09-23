@@ -166,7 +166,12 @@ export function createStdioMcpRuntime(
   const workspaceQuery = new WorkspaceQueryService(workspaceRepository, pathGuard);
   const extensions = createLocalExtensionsService({
     settingsJson: settingsRepository.get(EXTENSIONS_SETTINGS_KEY),
-    workspaceRootProvider: async (): Promise<string> => workspace.realRootPath,
+    workspaceRootProvider: async (workspaceId?: string): Promise<string | undefined> => {
+      if (workspaceId === undefined) return workspace.realRootPath;
+      const requested = await workspaceRepository.get(workspaceId);
+      if (requested === null || isMachineRootPath(requested.realRootPath) || isMachineRootPath(requested.rootPath)) return undefined;
+      return requested.realRootPath;
+    },
     callTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpCallTimeoutMs), DEFAULT_MCP_CALL_TIMEOUT_MS, 1_000, 60 * 60_000),
     idleTimeoutMs: parseIntegerSetting(settingsRepository.get(USER_SETTING_KEYS.mcpIdleTimeoutMs), DEFAULT_MCP_IDLE_TIMEOUT_MS, 30_000, 24 * 60 * 60_000),
   });

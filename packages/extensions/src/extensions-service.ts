@@ -16,7 +16,7 @@ export interface LocalExtensionsServiceOptions {
   readonly settingsProvider?: () => ExtensionsSettings;
   readonly homeDir?: string;
   readonly appDataDir?: string;
-  readonly workspaceRootProvider?: () => Promise<string | undefined>;
+  readonly workspaceRootProvider?: (workspaceId?: string) => Promise<string | undefined>;
   readonly bundledSkillRoots?: readonly string[];
   readonly clientFactory?: McpClientFactory;
   readonly processTreeTerminator?: ProcessTreeTerminator;
@@ -28,7 +28,7 @@ export class LocalExtensionsService implements ExtensionsService {
   private readonly settingsProvider: () => ExtensionsSettings;
   private readonly homeDir: string | undefined;
   private readonly appDataDir: string | undefined;
-  private readonly workspaceRootProvider: () => Promise<string | undefined>;
+  private readonly workspaceRootProvider: (workspaceId?: string) => Promise<string | undefined>;
   private readonly bundledSkillRoots: readonly string[];
   private readonly sessions: McpSessionManager;
 
@@ -46,14 +46,22 @@ export class LocalExtensionsService implements ExtensionsService {
     });
   }
 
-  public async listSkills(input: { readonly query?: string; readonly source?: string }): Promise<Result<{ readonly skills: readonly SkillSummary[] }>> {
-    const catalog = await this.skillCatalog();
-    return catalog.list(input);
+  public async listSkills(input: { readonly query?: string; readonly source?: string; readonly workspaceId?: string }): Promise<Result<{ readonly skills: readonly SkillSummary[] }>> {
+    const catalog = await this.skillCatalog(input.workspaceId);
+    if (!catalog.ok) return catalog;
+    return catalog.value.list({
+      ...(input.query === undefined ? {} : { query: input.query }),
+      ...(input.source === undefined ? {} : { source: input.source }),
+    });
   }
 
-  public async readSkill(input: { readonly skillId: string; readonly relativePath?: string }): Promise<Result<SkillContent>> {
-    const catalog = await this.skillCatalog();
-    return catalog.read(input);
+  public async readSkill(input: { readonly skillId: string; readonly relativePath?: string; readonly workspaceId?: string }): Promise<Result<SkillContent>> {
+    const catalog = await this.skillCatalog(input.workspaceId);
+    if (!catalog.ok) return catalog;
+    return catalog.value.read({
+      skillId: input.skillId,
+      ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
+    });
   }
 
   public async listMcpServers(): Promise<Result<{ readonly servers: readonly McpServerListItem[] }>> {
@@ -166,14 +174,17 @@ export class LocalExtensionsService implements ExtensionsService {
     return ok(undefined);
   }
 
-  private async skillCatalog(): Promise<SkillCatalog> {
-    const workspaceRoot = await this.workspaceRootProvider();
-    return new SkillCatalog({
+  private async skillCatalog(workspaceId?: string): Promise<Result<SkillCatalog>> {
+    const workspaceRoot = await this.workspaceRootProvider(workspaceId);
+    if (workspaceId !== undefined && workspaceRoot === undefined) {
+      return err(appError('WORKSPACE_NOT_FOUND', `Workspace was not found: ${workspaceId}`));
+    }
+    return ok(new SkillCatalog({
       settings: this.settingsProvider(),
       ...(this.homeDir === undefined ? {} : { homeDir: this.homeDir }),
       ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
       bundledRoots: this.bundledSkillRoots,
-    });
+    }));
   }
 
   private async loader(): Promise<McpConfigLoader> {

@@ -90,7 +90,7 @@ const getGoalSchema = z.union([
   z.object({ workspaceId: z.string().min(1).max(128), goalKey }).strict(),
 ]);
 
-const checkpointGoalSchema = z.object({
+const checkpointGoalBaseShape = {
   goalId,
   leaseToken,
   expectedRevision: z.number().int().min(0),
@@ -101,16 +101,22 @@ const checkpointGoalSchema = z.object({
   nextAction: z.string().max(1024),
   blockers: z.array(z.string().min(1).max(512)).max(20),
   evidence: z.array(evidence).max(20),
-  activeTaskIds: z.array(z.string().min(1).max(256)).max(50).optional(),
-  trackedTasks: z.array(trackedTask).max(50).optional(),
   resumeContext: resumeContext.optional(),
   ponytailMode: ponytailModeOverride.optional(),
   releaseLease: z.boolean().optional(),
-}).strict().refine((value) => value.activeTaskIds !== undefined || value.trackedTasks !== undefined, {
-  message: 'activeTaskIds or trackedTasks is required',
-}).refine((value) => value.activeTaskIds === undefined || value.trackedTasks === undefined || value.activeTaskIds.length === 0, {
-  message: 'Use trackedTasks or activeTaskIds, not both',
-});
+} as const;
+
+const checkpointGoalSchema = z.union([
+  z.object({
+    ...checkpointGoalBaseShape,
+    activeTaskIds: z.array(z.string().min(1).max(256)).max(50),
+  }).strict(),
+  z.object({
+    ...checkpointGoalBaseShape,
+    trackedTasks: z.array(trackedTask).max(50),
+    activeTaskIds: z.array(z.string().min(1).max(256)).max(0).optional(),
+  }).strict(),
+]);
 
 const updateGoalPlanSchema = z.object({
   goalId,
@@ -217,12 +223,12 @@ export const GOAL_TOOL_NAMES = [
 const MAX_GOAL_SKILL_PREFLIGHT_BYTES = 48 * 1024;
 const MAX_GOAL_PROJECT_INSTRUCTIONS_BYTES = 512 * 1024;
 
-async function loadGoalSkillPreflight(context: McpToolContext, objective: string | undefined): Promise<Readonly<Record<string, unknown>> | undefined> {
+async function loadGoalSkillPreflight(context: McpToolContext, objective: string | undefined, workspaceId: string): Promise<Readonly<Record<string, unknown>> | undefined> {
   const query = objective?.trim();
   const extensions = context.services.extensions;
   if (query === undefined || query.length === 0 || extensions === undefined) return undefined;
 
-  const listed = await extensions.listSkills({});
+  const listed = await extensions.listSkills({ workspaceId });
   if (!listed.ok) return { status: 'unavailable', mode: 'auto', loadedSkills: [] };
   const ranked = rankSkillMatches(listed.value.skills, query, 8);
   const selected = selectAutoSkillMatches(ranked);
@@ -232,7 +238,7 @@ async function loadGoalSkillPreflight(context: McpToolContext, objective: string
   const loadedSkills: unknown[] = [];
   let loadedBytes = 0;
   for (const match of selected) {
-    const loaded = await extensions.readSkill({ skillId: match.skill.id });
+    const loaded = await extensions.readSkill({ skillId: match.skill.id, workspaceId });
     if (!loaded.ok) continue;
     const bytes = Buffer.byteLength(loaded.value.content, 'utf8');
     if (bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES || loadedBytes + bytes > MAX_GOAL_SKILL_PREFLIGHT_BYTES) continue;
@@ -304,7 +310,7 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
           ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         });
         if (!result.ok) return result;
-        const skillPreflight = await loadGoalSkillPreflight(context, input.objective);
+        const skillPreflight = await loadGoalSkillPreflight(context, input.objective, input.workspaceId);
         const active = result.value.status === 'active';
         const scheduledContinuation = input.scheduledContinuation ?? 'auto';
         const auto = scheduledContinuation === 'auto';
@@ -562,8 +568,8 @@ export function goalTools(context: McpToolContext): McpToolDefinition[] {
         nextAction: input.nextAction,
         blockers: input.blockers,
         evidence: input.evidence,
-        ...(input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
-        ...(input.trackedTasks === undefined ? {} : { trackedTasks: input.trackedTasks }),
+        ...(!('activeTaskIds' in input) || input.activeTaskIds === undefined ? {} : { activeTaskIds: input.activeTaskIds }),
+        ...(!('trackedTasks' in input) ? {} : { trackedTasks: input.trackedTasks }),
         ...(input.resumeContext === undefined ? {} : { resumeContext: input.resumeContext }),
         ...(input.ponytailMode === undefined ? {} : { ponytailMode: input.ponytailMode }),
         ...(input.releaseLease === undefined ? {} : { releaseLease: input.releaseLease }),

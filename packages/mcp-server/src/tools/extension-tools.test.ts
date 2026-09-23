@@ -49,6 +49,48 @@ describe('skills and mcp bridge tools', () => {
     });
   });
 
+  it('advertises workspaceId and forwards it through skills_list and skills_read', async () => {
+    const listedInputs: unknown[] = [];
+    const readInputs: unknown[] = [];
+    const extensions: ExtensionsService = {
+      listSkills: async (input) => {
+        listedInputs.push(input);
+        return ok({ skills: [{ id: 'workspace-agents-skills/b', name: 'b', description: 'd', source: 'workspace-agents-skills', trustTier: 'workspace', rootPath: 'B', skillPath: 'B/SKILL.md' }] });
+      },
+      readSkill: async (input) => {
+        readInputs.push(input);
+        return ok({ id: 'workspace-agents-skills/b', name: 'b', description: 'd', source: 'workspace-agents-skills', trustTier: 'workspace', path: 'B/SKILL.md', content: '# b' });
+      },
+      listMcpServers: async () => ok({ servers: [] }),
+      describeMcpServer: async () => ok({ server: 'mock', enabled: true, connected: true, provenance: { source: 'test', trustTier: 'external', namespace: 'mcp:mock', descriptorFingerprint: 'd', catalogFingerprint: 'c', drift: { detected: false, reasons: [] } }, tools: [] }),
+      listMcpResources: async () => ok({ server: 'mock', enabled: true, connected: true, resources: [] }),
+      callMcpTool: async () => ok({ content: [] }),
+      close: async () => undefined,
+    };
+    const registry = new ToolRegistry({ extensions }, { clientId: 'test', clientName: 'test' }, {
+      hostMutationApprovalProvider: async (): Promise<boolean> => true,
+    });
+
+    expect(registry.describeInputJsonSchema('skills_list')).toMatchObject({
+      type: 'object',
+      properties: {
+        workspaceId: { type: 'string', minLength: 1, maxLength: 128 },
+      },
+    });
+
+    await expect(registry.invoke('skills_list', { query: 'b', workspaceId: 'workspace-b' })).resolves.toMatchObject({
+      structuredContent: { skills: [expect.objectContaining({ name: 'b' })] },
+    });
+    await expect(registry.invoke('skills_read', {
+      skillId: 'workspace-agents-skills/b',
+      workspaceId: 'workspace-b',
+    })).resolves.toMatchObject({
+      structuredContent: { name: 'b' },
+    });
+    expect(listedInputs).toEqual([{ query: 'b', workspaceId: 'workspace-b' }]);
+    expect(readInputs).toEqual([{ skillId: 'workspace-agents-skills/b', workspaceId: 'workspace-b' }]);
+  });
+
   it('returns external MCP image blocks to the caller as first-class MCP content', async () => {
     const extensions: ExtensionsService = {
       listSkills: async () => ok({ skills: [] }),

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -76,6 +76,59 @@ describe('stdio MCP runtime', () => {
       expect(runtime.services.goals).toBeDefined();
       expect(runtime.services.scheduledContinuations).toBeDefined();
       expect(runtime.services.automationFactory).toBeDefined();
+    } finally {
+      await runtime.close();
+    }
+  });
+
+  it('routes explicit skill discovery to the requested registered workspace while preserving the default workspace', async () => {
+    const dataPath = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-skill-routing-data-'));
+    const workspaceRootA = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-skill-routing-a-')));
+    const workspaceRootB = await realpath(await mkdtemp(path.join(os.tmpdir(), 'lnwjud-stdio-skill-routing-b-')));
+    temporaryRoots.push(dataPath, workspaceRootA, workspaceRootB);
+    const workspaceA = {
+      id: 'stdio-workspace-a',
+      displayName: 'stdio workspace A',
+      rootPath: workspaceRootA,
+      realRootPath: workspaceRootA,
+      createdAt: '2026-09-23T00:00:00.000Z',
+    };
+    const workspaceB = {
+      id: 'stdio-workspace-b',
+      displayName: 'stdio workspace B',
+      rootPath: workspaceRootB,
+      realRootPath: workspaceRootB,
+      createdAt: '2026-09-23T00:00:01.000Z',
+    };
+    for (const [workspaceRoot, name] of [
+      [workspaceRootA, 'stdio-a-skill'],
+      [workspaceRootB, 'stdio-b-skill'],
+    ] as const) {
+      const skillDir = path.join(workspaceRoot, '.agents', 'skills', name);
+      await mkdir(skillDir, { recursive: true });
+      await writeFile(path.join(skillDir, 'SKILL.md'), `---\nname: ${name}\ndescription: workspace skill ${name}\n---\n# ${name}\n`, 'utf8');
+    }
+
+    const seeded = new SqliteDatabase(path.join(dataPath, 'lnwjud.sqlite'));
+    const repository = new SqliteWorkspaceRepository(seeded);
+    await repository.insert(workspaceA);
+    await repository.insert(workspaceB);
+    seeded.close();
+
+    const runtime = createStdioMcpRuntime(dataPath, workspaceA);
+    try {
+      const registry = new ToolRegistry(runtime.services, runtime.actor);
+      const legacy = await registry.invoke('skills_list', { query: 'stdio-' });
+      expect(legacy.isError).not.toBe(true);
+      const legacySkills = (legacy.structuredContent as { skills?: readonly { name?: string }[] } | undefined)?.skills ?? [];
+      expect(legacySkills.map((skill) => skill.name)).toContain('stdio-a-skill');
+      expect(legacySkills.map((skill) => skill.name)).not.toContain('stdio-b-skill');
+
+      const explicit = await registry.invoke('skills_list', { query: 'stdio-', workspaceId: workspaceB.id });
+      expect(explicit.isError).not.toBe(true);
+      const explicitSkills = (explicit.structuredContent as { skills?: readonly { name?: string }[] } | undefined)?.skills ?? [];
+      expect(explicitSkills.map((skill) => skill.name)).toContain('stdio-b-skill');
+      expect(explicitSkills.map((skill) => skill.name)).not.toContain('stdio-a-skill');
     } finally {
       await runtime.close();
     }

@@ -76,6 +76,68 @@ describe('LocalExtensionsService MCP bridge', () => {
     }
   }, 15_000);
 
+  it('binds explicit workspace skill discovery independently of the selected workspace', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'lnwjud-workspace-skills-'));
+    try {
+      const home = path.join(root, 'home');
+      const workspaceA = path.join(root, 'workspace-a');
+      const workspaceB = path.join(root, 'workspace-b');
+      for (const [workspaceRoot, name] of [
+        [workspaceA, 'a-workspace-skill'],
+        [workspaceB, 'b-workspace-skill'],
+      ] as const) {
+        const skillRoot = path.join(workspaceRoot, '.agents', 'skills', name);
+        await mkdir(skillRoot, { recursive: true });
+        await writeFile(path.join(skillRoot, 'SKILL.md'), `---\nname: ${name}\ndescription: ${name} description\n---\n# ${name}\nworkspace=${name}\n`, 'utf8');
+      }
+
+      const workspaceRoots: Readonly<Record<string, string>> = {
+        'workspace-a': workspaceA,
+        'workspace-b': workspaceB,
+      };
+      const service = new LocalExtensionsService({
+        settings: DEFAULT_EXTENSIONS_SETTINGS,
+        homeDir: home,
+        workspaceRootProvider: async (workspaceId?: string) => workspaceId === undefined
+          ? workspaceA
+          : workspaceRoots[workspaceId],
+      });
+
+      const legacy = await service.listSkills({ query: 'workspace-skill' });
+      expect(legacy).toMatchObject({ ok: true });
+      if (!legacy.ok) return;
+      expect(legacy.value.skills.map((skill) => skill.name)).toContain('a-workspace-skill');
+      expect(legacy.value.skills.map((skill) => skill.name)).not.toContain('b-workspace-skill');
+
+      const explicit = await service.listSkills({ query: 'workspace-skill', workspaceId: 'workspace-b' });
+      expect(explicit).toMatchObject({ ok: true });
+      if (!explicit.ok) return;
+      expect(explicit.value.skills.map((skill) => skill.name)).toContain('b-workspace-skill');
+      expect(explicit.value.skills.map((skill) => skill.name)).not.toContain('a-workspace-skill');
+
+      await expect(service.readSkill({
+        workspaceId: 'workspace-b',
+        skillId: 'workspace-agents-skills/b-workspace-skill',
+      })).resolves.toMatchObject({
+        ok: true,
+        value: {
+          name: 'b-workspace-skill',
+          source: 'workspace-agents-skills',
+          trustTier: 'workspace',
+          content: expect.stringContaining('workspace=b-workspace-skill'),
+        },
+      });
+
+      await expect(service.listSkills({ workspaceId: 'workspace-missing' })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'WORKSPACE_NOT_FOUND' },
+      });
+      await service.close();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   it('lists, describes, and calls child MCP tools through the session manager', async () => {
     const calls: string[] = [];
     const session: McpClientSession = {

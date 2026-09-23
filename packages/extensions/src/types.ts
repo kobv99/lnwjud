@@ -82,8 +82,8 @@ export interface McpResourceSummary {
 }
 
 export interface ExtensionsService {
-  listSkills(input: { readonly query?: string; readonly source?: string }): Promise<Result<{ readonly skills: readonly SkillSummary[] }>>;
-  readSkill(input: { readonly skillId: string; readonly relativePath?: string }): Promise<Result<SkillContent>>;
+  listSkills(input: { readonly query?: string; readonly source?: string; readonly workspaceId?: string }): Promise<Result<{ readonly skills: readonly SkillSummary[] }>>;
+  readSkill(input: { readonly skillId: string; readonly relativePath?: string; readonly workspaceId?: string }): Promise<Result<SkillContent>>;
   listMcpServers(): Promise<Result<{ readonly servers: readonly McpServerListItem[] }>>;
   describeMcpServer(input: { readonly server: string }, signal?: AbortSignal): Promise<Result<{
     readonly server: string;
