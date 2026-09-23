@@ -42,19 +42,20 @@ describe('MCP server live tool availability', () => {
 
       const initial = await client.listTools();
       expect(initial.tools.map((tool) => tool.name)).toContain('read_file');
+      expect(initial.tools.map((tool) => tool.name)).toContain('get_goal_plan');
       expect(initial.tools.map((tool) => tool.name)).not.toContain('codex_run');
 
       snapshot = {
         version: 1,
         generation: 1,
-        overrides: { read_file: 'disabled' },
+        overrides: { read_file: 'disabled', get_goal_plan: 'disabled' },
       };
       for (const listener of [...listeners]) listener(snapshot);
 
       snapshot = {
         version: 1,
         generation: 2,
-        overrides: { read_file: 'enabled' },
+        overrides: { read_file: 'enabled', get_goal_plan: 'disabled' },
       };
       for (const listener of [...listeners]) listener(snapshot);
 
@@ -66,6 +67,7 @@ describe('MCP server live tool availability', () => {
 
       const updated = await client.listTools();
       expect(updated.tools.map((tool) => tool.name)).toContain('read_file');
+      expect(updated.tools.map((tool) => tool.name)).not.toContain('get_goal_plan');
       expect(updated.tools.map((tool) => tool.name)).not.toContain('codex_run');
     } finally {
       await client.close().catch(() => undefined);

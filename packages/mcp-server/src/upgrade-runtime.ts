@@ -697,6 +697,22 @@ export class UpgradeRuntimeService {
     if (entry === undefined) return { found: false, name: name ?? null };
     const upgradeEntry = UPGRADE_TOOL_CATALOG.find((candidate) => candidate.name === entry.name);
     if (upgradeEntry === undefined) {
+      const definition = this.getToolDefinition?.(entry.name);
+      if (definition !== undefined) {
+        const contract = registeredToolSchema(definition);
+        return {
+          found: true,
+          ...entry,
+          description: definition.description,
+          schema: contract.inputSchema,
+          inputSchema: contract.inputSchema,
+          outputSchema: contract.outputSchema,
+          annotations: definition.annotations,
+          execution: definition.execution,
+          contractSource: 'mcp-tool-registry',
+          authorizationUnchanged: true,
+        };
+      }
       const explicitSchema = ENGINEERING_PRIMITIVE_SCHEMAS[entry.name];
       return {
         found: true,
