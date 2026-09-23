@@ -26,6 +26,7 @@ export function skillTools(context: McpToolContext): McpToolDefinition[] {
         : context.services.extensions.listSkills({
           ...(input.query === undefined ? {} : { query: input.query }),
           ...(input.source === undefined ? {} : { source: input.source }),
+          ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
         }),
     }),
     defineTool({
@@ -38,6 +39,7 @@ export function skillTools(context: McpToolContext): McpToolDefinition[] {
         : context.services.extensions.readSkill({
           skillId: input.skillId,
           ...(input.relativePath === undefined ? {} : { relativePath: input.relativePath }),
+          ...(input.workspaceId === undefined ? {} : { workspaceId: input.workspaceId }),
         }),
     }),
     defineTool({

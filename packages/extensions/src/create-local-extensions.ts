@@ -12,7 +12,7 @@ export interface CreateLocalExtensionsOptions {
   readonly settingsJsonProvider?: () => string | null | undefined;
   readonly homeDir?: string;
   readonly appDataDir?: string;
-  readonly workspaceRootProvider?: () => Promise<string | undefined>;
+  readonly workspaceRootProvider?: (workspaceId?: string) => Promise<string | undefined>;
   readonly bundledSkillRoots?: readonly string[];
   readonly clientFactory?: McpClientFactory;
   readonly processTreeTerminator?: ProcessTreeTerminator;
