@@ -235,6 +235,8 @@ describe('MCP tool registry', () => {
     expect(JSON.stringify(described.structuredContent)).toContain('get_goal_plan');
     const schemaList = await registry.invoke('tool_schema_list', {});
     expect(JSON.stringify(schemaList.structuredContent)).toContain('get_goal_plan');
+    const schemas = schemaList.structuredContent?.schemas as readonly Record<string, unknown>[] | undefined;
+    expect(schemas?.find((schema) => schema.id === 'context_pressure')).toMatchObject({ streamable: false });
 
     snapshot = { version: 1, generation: 1, overrides: { get_goal_plan: 'disabled' } };
     expect(registry.list().some((tool) => tool.name === 'get_goal_plan')).toBe(false);

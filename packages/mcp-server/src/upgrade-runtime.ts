@@ -3212,6 +3212,35 @@ function normalizePlugin(value: unknown): RuntimePluginDescriptor | undefined {
   };
 }
 
+
+function registeredToolSchema(tool: McpToolDefinition): Record<string, unknown> {
+  const inputSchema = schemaJson(tool.inputSchema) ?? { type: 'object', additionalProperties: false };
+  return {
+    id: tool.name,
+    version: '1.0.0',
+    permissions: [tool.permission],
+    streamable: false,
+    parallelSafe: tool.permission === 'READ' && tool.annotations.readOnlyHint && !tool.annotations.destructiveHint,
+    source: 'mcp_registry',
+    schema: inputSchema,
+    inputSchema,
+    outputSchema: schemaJson(tool.outputSchema) ?? { type: 'object' },
+    annotations: tool.annotations,
+    execution: tool.execution,
+  };
+}
+
+function schemaJson(schema: z.ZodType): Record<string, unknown> | undefined {
+  try {
+    const jsonSchema: unknown = z.toJSONSchema(schema);
+    return typeof jsonSchema === 'object' && jsonSchema !== null && !Array.isArray(jsonSchema)
+      ? jsonSchema as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function upgradeCatalogByName(name: string): UpgradeToolCatalogEntry | undefined {
   return UPGRADE_TOOL_CATALOG.find((entry) => entry.name === name);
 }
