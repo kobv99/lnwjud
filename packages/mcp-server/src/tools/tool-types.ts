@@ -172,6 +172,8 @@ export interface McpToolContext {
   readonly contextEconomy: ContextEconomyRuntime;
   /** Dynamic registry exposure predicate used by discovery/ranking helpers. */
   readonly isToolExposed?: (name: string) => boolean;
+  /** Returns a tool definition only while it is in the effective advertised surface. */
+  readonly getToolDefinition?: (name: string) => McpToolDefinition | undefined;
   /** Session-scoped Ponytail suppression owned by the current ToolRegistry/transport ledger. */
   readonly setPonytailSessionSuppressed?: (workspaceId: string, goalId: string | undefined, suppressed: boolean) => Promise<boolean>;
 }

@@ -397,9 +397,16 @@ describe('upgrade runtime', () => {
   });
 
   it('validates Ponytail workspace overrides before project profile persistence', async () => {
+    const persisted = new Map<string, string>();
     const runtime = new UpgradeRuntimeService({
       file: {
-        async writeFile(): Promise<ReturnType<typeof ok>> { return ok({ path: '.lnwjud/project-profile.json' }); },
+        async readFile(_actor, _workspaceId, request): Promise<ReturnType<typeof ok>> {
+          return ok({ path: request.path, content: persisted.get(request.path) ?? '' });
+        },
+        async writeFile(_actor, _workspaceId, request): Promise<ReturnType<typeof ok>> {
+          persisted.set(request.path, request.content);
+          return ok({ path: request.path });
+        },
       } as McpApplicationServices['file'],
     }, actor);
 
@@ -408,12 +415,23 @@ describe('upgrade runtime', () => {
     })).resolves.toMatchObject({
       ok: true, value: { dryRun: true, executed: false, profile: { ponytail: { mode: 'full' } } },
     });
+    expect(persisted.size).toBe(0);
     await expect(runtime.execute('project_profile_set', {
       workspaceId: 'workspace-1', profile: { ponytail: { mode: 'inherit' } },
     })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
     await expect(runtime.execute('project_profile_set', {
       workspaceId: 'workspace-1', profile: { ponytail: 'full' },
     })).resolves.toMatchObject({ ok: false, error: { code: 'INVALID_INPUT' } });
+
+    await expect(runtime.execute('project_profile_set', {
+      workspaceId: 'workspace-1', profile: { language: 'typescript', ponytail: { mode: 'full' } }, dryRun: false,
+    })).resolves.toMatchObject({
+      ok: true, value: { dryRun: false, executed: true, profile: { language: 'typescript', ponytail: { mode: 'full' } } },
+    });
+    await expect(runtime.execute('project_profile_get', { workspaceId: 'workspace-1' })).resolves.toMatchObject({
+      ok: true, value: { executed: true, profile: { language: 'typescript', ponytail: { mode: 'full' } } },
+    });
+    expect(persisted.size).toBe(1);
   });
 
   it('uses trusted Full Bypass for inner always-confirm upgrade mutations', async () => {

@@ -230,6 +230,7 @@ export class ToolRegistry {
       actor,
       contextEconomy,
       isToolExposed: (name) => this.isEffectivelyExposed(name),
+      getToolDefinition: (name) => this.list().find((tool) => tool.name === name),
       setPonytailSessionSuppressed: (workspaceId, goalId, suppressed) => this.setPonytailSessionSuppressed(workspaceId, goalId, suppressed),
     };
     const contextEngine = new ContextEngine(services, actor, contextEconomy);

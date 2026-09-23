@@ -220,6 +220,30 @@ describe('MCP tool registry', () => {
     expect(registry.listAll().map((tool) => tool.name)).toContain('read_file');
   });
 
+  it('keeps canonical Durable Goal tools in the effective surface and hides disabled tools from discovery', async () => {
+    let snapshot: ToolAvailabilitySnapshot = { version: 1, generation: 0, overrides: {} };
+    const registry = new ToolRegistry({}, actor, { toolAvailabilitySnapshotProvider: () => snapshot });
+    const goalTools = ['run_goal', 'get_goal', 'get_goal_plan', 'checkpoint_goal', 'finish_goal', 'context_pressure'];
+    const inventory = new Set(registry.listAll().map((tool) => tool.name));
+    for (const name of goalTools) {
+      expect(inventory.has(name), `inventory:${name}`).toBe(true);
+      expect(registry.list().some((tool) => tool.name === name), `effective:${name}`).toBe(true);
+    }
+
+    const described = await registry.invoke('tool_describe', { name: 'get_goal_plan' });
+    expect(JSON.stringify(described.structuredContent)).toContain('mcp-tool-registry');
+    expect(JSON.stringify(described.structuredContent)).toContain('get_goal_plan');
+    const schemaList = await registry.invoke('tool_schema_list', {});
+    expect(JSON.stringify(schemaList.structuredContent)).toContain('get_goal_plan');
+
+    snapshot = { version: 1, generation: 1, overrides: { get_goal_plan: 'disabled' } };
+    expect(registry.list().some((tool) => tool.name === 'get_goal_plan')).toBe(false);
+    const hiddenDescription = await registry.invoke('tool_describe', { name: 'get_goal_plan' });
+    expect(JSON.stringify(hiddenDescription.structuredContent)).toContain('"found":false');
+    const hiddenSchemas = await registry.invoke('tool_schema_list', {});
+    expect(JSON.stringify(hiddenSchemas.structuredContent)).not.toContain('get_goal_plan');
+  });
+
   it('lets an already-started call settle after disable while blocking future calls', async () => {
     let snapshot = { version: 1 as const, generation: 0, overrides: {} as Record<string, 'enabled' | 'disabled'> };
     let releaseRead!: () => void;

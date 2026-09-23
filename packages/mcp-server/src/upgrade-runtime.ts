@@ -17,7 +17,8 @@ import { capabilityDescriptors, EventLogCapabilityBackend, type CapabilityDescri
 import { createProcessTreeTerminator } from '@lnwjud/process';
 import { normalizeProjectProfile } from '@lnwjud/shared';
 import { hostPathApi, isAbsoluteHostPath, normalizeHostPath } from '@lnwjud/workspace';
-import type { McpApplicationServices } from './tools/tool-types.js';
+import { z } from 'zod';
+import type { McpApplicationServices, McpToolDefinition } from './tools/tool-types.js';
 import { ContextEngine } from './context-engine.js';
 import { EccProviderService, type EccArtifactKind } from './ecc-provider.js';
 import { EccMemoryVaultService, type EccMemoryKind, type EccMemoryScope } from './ecc-memory-vault.js';
@@ -166,8 +167,20 @@ const PRIMITIVE_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = [
 ];
 
 const CAPABILITY_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = capabilityDescriptors.map((descriptor) => capabilitySearchEntry(descriptor));
+const DURABLE_GOAL_DISCOVERY_TOOL_NAMES = [
+  'run_goal', 'get_goal', 'get_goal_plan', 'checkpoint_goal', 'finish_goal', 'context_pressure',
+] as const;
+const DURABLE_GOAL_SEARCH_ENTRIES: readonly SearchCatalogEntry[] = [
+  primitiveEntry('run_goal', 'Create or resume a durable workspace goal and acquire its lease.', 'WRITE', ['goal', 'durable']),
+  primitiveEntry('get_goal', 'Read the current durable goal state.', 'READ', ['goal', 'durable', 'status']),
+  primitiveEntry('get_goal_plan', 'Read the durable goal plan and acceptance criteria.', 'READ', ['goal', 'durable', 'plan']),
+  primitiveEntry('checkpoint_goal', 'Persist a durable goal progress checkpoint and recovery context.', 'WRITE', ['goal', 'durable', 'checkpoint']),
+  primitiveEntry('finish_goal', 'Complete or terminate a durable goal after its completion conditions are met.', 'WRITE', ['goal', 'durable', 'completion']),
+  primitiveEntry('context_pressure', 'Estimate durable context pressure from goal state and its latest capsule.', 'READ', ['goal', 'durable', 'context']),
+];
 const SEARCH_CATALOG: readonly SearchCatalogEntry[] = dedupeSearchEntries([
   ...PRIMITIVE_SEARCH_ENTRIES,
+  ...DURABLE_GOAL_SEARCH_ENTRIES,
   ...CAPABILITY_SEARCH_ENTRIES,
   ...UPGRADE_TOOL_CATALOG,
 ]);
@@ -206,6 +219,7 @@ export class UpgradeRuntimeService {
     private readonly isToolExposed: (name: string) => boolean = () => true,
     incrementalVerifier: IncrementalVerifier = new IncrementalVerifier(),
     private readonly activityTracker?: ActivityTracker,
+    private readonly getToolDefinition?: (name: string) => McpToolDefinition | undefined,
   ) {
     this.actor = actor;
     this.incrementalVerifier = incrementalVerifier;
@@ -637,6 +651,22 @@ export class UpgradeRuntimeService {
     if (entry === undefined) return { found: false, name: name ?? null };
     const upgradeEntry = UPGRADE_TOOL_CATALOG.find((candidate) => candidate.name === entry.name);
     if (upgradeEntry === undefined) {
+      const definition = this.getToolDefinition?.(entry.name);
+      if (definition !== undefined) {
+        const contract = registeredToolSchema(definition);
+        return {
+          found: true,
+          ...entry,
+          description: definition.description,
+          schema: contract.inputSchema,
+          inputSchema: contract.inputSchema,
+          outputSchema: contract.outputSchema,
+          annotations: definition.annotations,
+          execution: definition.execution,
+          contractSource: 'mcp-tool-registry',
+          authorizationUnchanged: true,
+        };
+      }
       return {
         found: true,
         ...entry,
@@ -1048,7 +1078,7 @@ export class UpgradeRuntimeService {
   }
 
   private listToolSchemas(): readonly Record<string, unknown>[] {
-    const baseline = UPGRADE_TOOL_CATALOG.map((entry) => ({
+    const baseline = UPGRADE_TOOL_CATALOG.filter((entry) => this.isToolExposed(entry.name)).map((entry) => ({
       id: entry.name, version: '1.0.0', permissions: [entry.permission], streamable: entry.streamable === true,
       parallelSafe: entry.parallelSafe === true,
       source: 'built_in',
@@ -1058,9 +1088,13 @@ export class UpgradeRuntimeService {
       annotations: upgradeToolAnnotations(entry),
       execution: upgradeToolExecution(entry),
     }));
+    const durableGoals = DURABLE_GOAL_DISCOVERY_TOOL_NAMES.flatMap((name) => {
+      const definition = this.getToolDefinition?.(name);
+      return definition === undefined ? [] : [registeredToolSchema(definition)];
+    });
     const stored = this.session.get('toolSchemas');
     const custom = Array.isArray(stored) ? stored.filter(isRegisteredToolSchema) : [];
-    return [...baseline, ...custom].sort((left, right) => String(left.id).localeCompare(String(right.id)) || String(left.version).localeCompare(String(right.version)));
+    return [...baseline, ...durableGoals, ...custom].sort((left, right) => String(left.id).localeCompare(String(right.id)) || String(left.version).localeCompare(String(right.version)));
   }
 
   private async registerToolSchema(input: Record<string, unknown>): Promise<Result<unknown>> {
@@ -3116,6 +3150,34 @@ function normalizePlugin(value: unknown): RuntimePluginDescriptor | undefined {
     trustTier: 'external',
     namespace: `plugin:${name}`,
   };
+}
+
+function registeredToolSchema(tool: McpToolDefinition): Record<string, unknown> {
+  const inputSchema = schemaJson(tool.inputSchema) ?? { type: 'object', additionalProperties: false };
+  return {
+    id: tool.name,
+    version: '1.0.0',
+    permissions: [tool.permission],
+    streamable: /(?:page|context|map|stream|logs)/i.test(tool.name),
+    parallelSafe: tool.permission === 'READ' && tool.annotations.readOnlyHint && !tool.annotations.destructiveHint,
+    source: 'mcp_registry',
+    schema: inputSchema,
+    inputSchema,
+    outputSchema: schemaJson(tool.outputSchema) ?? { type: 'object' },
+    annotations: tool.annotations,
+    execution: tool.execution,
+  };
+}
+
+function schemaJson(schema: z.ZodType): Record<string, unknown> | undefined {
+  try {
+    const jsonSchema: unknown = z.toJSONSchema(schema);
+    return typeof jsonSchema === 'object' && jsonSchema !== null && !Array.isArray(jsonSchema)
+      ? jsonSchema as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function upgradeCatalogByName(name: string): UpgradeToolCatalogEntry | undefined {

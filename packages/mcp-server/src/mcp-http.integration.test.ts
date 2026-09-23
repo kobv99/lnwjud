@@ -13,11 +13,13 @@ const expectedAdvertisedToolCount = new ToolRegistry({}, { clientId: 'count-test
 describe('MCP localhost HTTP transport', () => {
   let handle: McpHttpServerHandle;
   let workspaceListCalls: number;
+  let workspaceRegisterCalls: unknown[];
   let workspaceListImpl: () => Promise<ReturnType<typeof ok<readonly { id: string; kind: string }[]>>>;
   let activityTracker: ActivityTracker;
 
   beforeEach(async () => {
     workspaceListCalls = 0;
+    workspaceRegisterCalls = [];
     activityTracker = new ActivityTracker();
     workspaceListImpl = async (): Promise<ReturnType<typeof ok<readonly { id: string; kind: string }[]>>> => ok([{ id: 'workspace-1', kind: 'project' }]);
     handle = await startMcpHttp({
@@ -29,10 +31,15 @@ describe('MCP localhost HTTP transport', () => {
             workspaceListCalls += 1;
             return workspaceListImpl();
           },
+          async register(_actor, request) {
+            workspaceRegisterCalls.push(request);
+            return ok({ id: 'workspace-registered', displayName: 'Project', rootPath: request.path, realRootPath: request.path, createdAt: new Date(0).toISOString(), kind: 'project' });
+          },
         },
       },
       actor: { clientId: 'http-test', clientName: 'http-test' },
       activityTracker,
+      hostMutationApprovalProvider: async () => true,
     });
   });
 
@@ -59,6 +66,44 @@ describe('MCP localhost HTTP transport', () => {
       expect(first.tools.map((tool) => tool.name)).toHaveLength(expectedAdvertisedToolCount);
       expect(first.tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
       expect(second.tools.map((tool) => tool.name)).toEqual(first.tools.map((tool) => tool.name));
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('publishes workspace, profile, and Durable Goal contracts through MCP tools/list', async () => {
+    const client = new Client({ name: 'advertised-contract-test', version: '0.1.0' }, { versionNegotiation: { mode: { pin: '2026-07-28' } } });
+    try {
+      await client.connect(new StreamableHTTPClientTransport(handle.endpoint));
+      const tools = (await client.listTools()).tools;
+      const schemaFor = (name: string): Record<string, unknown> => {
+        const schema = tools.find((tool) => tool.name === name)?.inputSchema;
+        expect(schema, name).toBeDefined();
+        return schema as Record<string, unknown>;
+      };
+      const workspaceSchema = schemaFor('workspace_register');
+      expect(workspaceSchema).toMatchObject({
+        type: 'object', required: ['path'], additionalProperties: false,
+        properties: { parentWorkspaceId: { type: 'string' }, path: { type: 'string' } },
+      });
+      const profileSchema = schemaFor('project_profile_set');
+      expect(profileSchema).toMatchObject({
+        properties: { dryRun: { type: 'boolean' }, dry_run: { type: 'boolean' } },
+        additionalProperties: false,
+      });
+      for (const name of ['run_goal', 'get_goal', 'get_goal_plan', 'checkpoint_goal', 'finish_goal', 'context_pressure']) {
+        expect(tools.some((tool) => tool.name === name), name).toBe(true);
+      }
+      expect(tools.some((tool) => tool.name.startsWith('codex_'))).toBe(false);
+
+      const direct = await client.callTool({ name: 'workspace_register', arguments: { path: 'D:\\Projects\\Direct', userConfirmed: true } });
+      const legacy = await client.callTool({ name: 'workspace_register', arguments: { parentWorkspaceId: 'machine-root-1', path: 'D:\\Projects\\Legacy', userConfirmed: true } });
+      expect(direct.isError).not.toBe(true);
+      expect(legacy.isError).not.toBe(true);
+      expect(workspaceRegisterCalls).toEqual([
+        { path: 'D:\\Projects\\Direct' },
+        { parentWorkspaceId: 'machine-root-1', path: 'D:\\Projects\\Legacy' },
+      ]);
     } finally {
       await client.close();
     }

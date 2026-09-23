@@ -214,7 +214,7 @@ const INPUT_FIELDS: Readonly<Record<string, readonly FieldName[]>> = Object.free
   inspect_pdf: ['workspaceId', 'file_path', 'path', 'file'],
   compare_pdf_pages: ['workspaceId', 'baseline_path', 'actual_path', 'baseline', 'actual', 'left_path', 'right_path'],
   project_profile_get: ['workspaceId'],
-  project_profile_set: ['workspaceId', 'profile'],
+  project_profile_set: ['workspaceId', 'profile', 'dryRun', 'dry_run'],
   benchmark_run: ['workspaceId', 'name', 'iterations'],
   regression_report: ['workspaceId'],
   event_watch: ['log_name', 'logName', 'provider', 'since', 'max_events'],
