@@ -4,7 +4,7 @@ param(
     [ValidatePattern('^v?\d+\.\d+\.\d+$')]
     [string]$Version,
 
-    [switch]$SkipInstall,
+    [switch]$SkipDependencyInstall,
     [switch]$SkipReleaseGate,
     [switch]$SkipPackage,
     [switch]$PushCandidate
@@ -15,8 +15,11 @@ $ErrorActionPreference = 'Stop'
 
 function Invoke-Checked {
     param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $false)][string[]]$ArgumentList = @()
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$ArgumentList = @()
     )
 
     & $FilePath @ArgumentList
@@ -27,8 +30,11 @@ function Invoke-Checked {
 
 function Write-PipelineReport {
     param(
-        [Parameter(Mandatory = $true)][hashtable]$Report,
-        [Parameter(Mandatory = $true)][string]$Path
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Report,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Path
     )
 
     $directory = Split-Path -Parent $Path
@@ -36,7 +42,7 @@ function Write-PipelineReport {
     $Report | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 -Path $Path
 }
 
-$repoRoot = (git rev-parse --show-toplevel).Trim()
+$repoRoot = ([string](git rev-parse --show-toplevel)).Trim()
 if (-not $repoRoot) {
     throw 'Run this script from inside an lnwjud Git worktree.'
 }
@@ -54,11 +60,14 @@ if (-not (Test-Path $registryPath)) {
 }
 
 $registry = Get-Content -Raw -Path $registryPath | ConvertFrom-Json
-$versionTag = if ($Version.StartsWith('v')) { $Version } else { "v$Version" }
+$versionTag = $Version
+if (-not $versionTag.StartsWith('v')) {
+    $versionTag = "v$versionTag"
+}
 $versionNumber = $versionTag.Substring(1)
 $candidateBranch = "trader/patched-$versionTag"
-$pipelineSourceBranch = (git branch --show-current).Trim()
-$pipelineSourceHead = (git rev-parse HEAD).Trim()
+$pipelineSourceBranch = ([string](git branch --show-current)).Trim()
+$pipelineSourceHead = ([string](git rev-parse HEAD)).Trim()
 $reportRoot = Join-Path $repoRoot ".local-artifacts\trader-patch-pipeline\$versionTag"
 $reportPath = Join-Path $reportRoot 'PIPELINE_REPORT.json'
 
@@ -69,6 +78,7 @@ $report = @{
     pipelineSourceBranch = $pipelineSourceBranch
     pipelineSourceHead = $pipelineSourceHead
     upstreamRepository = [string]$registry.upstreamRepository
+    forkRepository = [string]$registry.forkRepository
     patchBranch = [string]$registry.patchBranch
     candidateBranch = $candidateBranch
     startedAtUtc = [DateTime]::UtcNow.ToString('o')
@@ -83,375 +93,44 @@ try {
     $remotes = @(git remote)
 
     if ($remotes -notcontains 'trader-upstream') {
-        Invoke-Checked git @('remote', 'add', 'trader-upstream', $upstreamUrl)
+        Invoke-Checked -FilePath 'git' -ArgumentList @('remote', 'add', 'trader-upstream', $upstreamUrl)
     }
     else {
         $configuredUpstream = ([string](git remote get-url trader-upstream)).Trim()
-        if ($configuredUpstream -notmatch 'engasnm111/lnwjud(?:\.git)?
-
-    Invoke-Checked git @('config', 'rerere.enabled', 'true')
-    Invoke-Checked git @('config', 'rerere.autoupdate', 'true')
-
-    $gitUserName = ([string](git config user.name)).Trim()
-    if (-not $gitUserName) {
-        Invoke-Checked git @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
-    }
-    $gitUserEmail = ([string](git config user.email)).Trim()
-    if (-not $gitUserEmail) {
-        Invoke-Checked git @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
-    }
-
-    Invoke-Checked git @('fetch', '--prune', 'trader-fork', [string]$registry.patchBranch)
-
-    $upstreamTagRef = "refs/trader-upstream-tags/$versionTag"
-    Invoke-Checked git @('fetch', '--prune', 'trader-upstream', "refs/tags/$versionTag`:$upstreamTagRef", '--force')
-    $upstreamCommit = ([string](git rev-parse "$upstreamTagRef^{commit}")).Trim()
-    if (-not $upstreamCommit) {
-        throw "Unable to resolve upstream tag $versionTag to a commit."
-    }
-
-    $report.upstreamCommit = $upstreamCommit
-
-    git show-ref --verify --quiet "refs/heads/$candidateBranch"
-    if ($LASTEXITCODE -eq 0) {
-        throw "Local candidate branch already exists: $candidateBranch. Delete or rename it after reviewing the prior candidate; the pipeline will not reset it automatically."
-    }
-
-    Invoke-Checked git @('switch', '--detach', $upstreamCommit)
-    Invoke-Checked git @('switch', '-c', $candidateBranch)
-
-    $rootPackage = Get-Content -Raw -Path (Join-Path $repoRoot 'package.json') | ConvertFrom-Json
-    if ([string]$rootPackage.version -ne $versionNumber) {
-        throw "Upstream tag/package version mismatch: tag=$versionTag package=$($rootPackage.version)"
-    }
-    $report.upstreamPackageVersion = [string]$rootPackage.version
-
-    foreach ($patch in $registry.patches) {
-        $sha = [string]$patch.commit
-        Invoke-Checked git @('cat-file', '-e', "$sha^{commit}")
-
-        & git cherry-pick -x $sha
-        if ($LASTEXITCODE -ne 0) {
-            $report.state = 'PATCH_CONFLICT'
-            $report.failedPatch = @{
-                id = [string]$patch.id
-                commit = $sha
-                subject = [string]$patch.subject
-            }
-            $report.gitStatus = @(git status --short)
-            $report.nextAction = 'Resolve the cherry-pick conflict manually, run git cherry-pick --continue, then rerun the remaining validation commands. Do not install this candidate.'
-            Write-PipelineReport -Report $report -Path $reportPath
-            Write-Host "PATCH_CONFLICT=$($patch.id)"
-            Write-Host "REPORT=$reportPath"
-            exit 20
-        }
-
-        $report.patches += @{
-            id = [string]$patch.id
-            commit = $sha
-            subject = [string]$patch.subject
-            status = 'APPLIED'
-        }
-    }
-
-    Invoke-Checked git @('diff', '--check', "$upstreamCommit..HEAD")
-    $report.checks += @{ name = 'git_diff_check'; status = 'PASS'; range = "$upstreamCommit..HEAD" }
-
-    if (-not $SkipInstall) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'install', '--frozen-lockfile')
-        $report.checks += @{ name = 'pnpm_frozen_install'; status = 'PASS' }
-    }
-
-    $contractTests = @($registry.contractTests | ForEach-Object { [string]$_ })
-    $vitestArgs = @('pnpm@10.15.0', 'exec', 'vitest', 'run') + $contractTests + @(
-        '--exclude=.local-artifacts/**',
-        '--exclude=.worktrees/**',
-        '--exclude=.superpowers/**',
-        '--exclude=.kilo/**'
-    )
-    Invoke-Checked corepack $vitestArgs
-    $report.checks += @{ name = 'trader_patch_contract_tests'; status = 'PASS'; files = $contractTests }
-
-    Invoke-Checked corepack @('pnpm@10.15.0', 'typecheck')
-    $report.checks += @{ name = 'typecheck'; status = 'PASS' }
-
-    if (-not $SkipReleaseGate) {
-        Invoke-Checked powershell @(
-            '-NoProfile',
-            '-NonInteractive',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', 'scripts/verify-release.ps1',
-            '-SkipWindowsPackaging'
-        )
-        $report.checks += @{ name = 'upstream_release_gate_without_windows_package'; status = 'PASS' }
-    }
-
-    Invoke-Checked corepack @('pnpm@10.15.0', 'build')
-    $report.checks += @{ name = 'build'; status = 'PASS' }
-
-    if (-not $SkipPackage) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'package:windows')
-        $report.checks += @{ name = 'package_windows'; status = 'PASS' }
-
-        $installerDir = Join-Path $repoRoot 'apps\desktop\dist\installers'
-        if (-not (Test-Path $installerDir)) {
-            throw "Windows package command completed but installer directory was not found: $installerDir"
-        }
-
-        $artifactFiles = @(
-            Get-ChildItem -Path $installerDir -File |
-                Where-Object {
-                    $_.Name -match '^lnwjud-(Setup|Portable)-' -or
-                    $_.Name -in @('SHA256SUMS.txt', 'PROVENANCE.json', 'latest.yml', 'portable.yml') -or
-                    $_.Name -like '*.blockmap'
-                } |
-                Sort-Object Name
-        )
-
-        foreach ($artifact in $artifactFiles) {
-            $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
-            $report.artifacts += @{
-                name = $artifact.Name
-                bytes = $artifact.Length
-                sha256 = $hash.Hash.ToLowerInvariant()
-            }
-        }
-    }
-
-    $candidateHead = (git rev-parse HEAD).Trim()
-    $report.candidateHead = $candidateHead
-    $report.state = 'PASS'
-    $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
-    $report.installAuthorizedByPipeline = $false
-    $report.promotionNote = 'PASS means candidate construction and validation succeeded. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed hash, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
-
-    if ($PushCandidate) {
-        Invoke-Checked git @('push', '--set-upstream', 'trader-fork', $candidateBranch)
-        $report.candidatePushed = $true
-    }
-    else {
-        $report.candidatePushed = $false
-    }
-
-    Write-PipelineReport -Report $report -Path $reportPath
-
-    Write-Host "TRADER_LNWJUD_PATCH_PIPELINE=PASS"
-    Write-Host "UPSTREAM_TAG=$versionTag"
-    Write-Host "UPSTREAM_COMMIT=$upstreamCommit"
-    Write-Host "CANDIDATE_BRANCH=$candidateBranch"
-    Write-Host "CANDIDATE_HEAD=$candidateHead"
-    Write-Host "REPORT=$reportPath"
-    Write-Host 'INSTALL_AUTHORIZED=NO_EXPLICIT_PROMOTION_REQUIRED'
-}
-catch {
-    $report.state = 'FAILED'
-    $report.error = $_.Exception.Message
-    $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
-    $report.gitStatus = @(git status --short)
-    $report.nextAction = 'Inspect the exact failed command/evidence. Do not install this candidate and do not stop the Tunnel solely because this pipeline failed.'
-    Write-PipelineReport -Report $report -Path $reportPath
-    Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=FAILED'
-    Write-Host "REPORT=$reportPath"
-    throw
-}
-) {
+        if ($configuredUpstream -notmatch 'engasnm111/lnwjud(?:\.git)?$') {
             throw "Existing trader-upstream remote points somewhere else: $configuredUpstream"
         }
     }
 
     if ($remotes -notcontains 'trader-fork') {
-        Invoke-Checked git @('remote', 'add', 'trader-fork', $forkUrl)
+        Invoke-Checked -FilePath 'git' -ArgumentList @('remote', 'add', 'trader-fork', $forkUrl)
     }
     else {
         $configuredFork = ([string](git remote get-url trader-fork)).Trim()
-        if ($configuredFork -notmatch 'kobv99/lnwjud(?:\.git)?
-
-    Invoke-Checked git @('config', 'rerere.enabled', 'true')
-    Invoke-Checked git @('config', 'rerere.autoupdate', 'true')
-
-    $gitUserName = ([string](git config user.name)).Trim()
-    if (-not $gitUserName) {
-        Invoke-Checked git @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
-    }
-    $gitUserEmail = ([string](git config user.email)).Trim()
-    if (-not $gitUserEmail) {
-        Invoke-Checked git @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
-    }
-
-    Invoke-Checked git @('fetch', '--prune', 'origin', [string]$registry.patchBranch)
-
-    $upstreamTagRef = "refs/trader-upstream-tags/$versionTag"
-    Invoke-Checked git @('fetch', '--prune', 'upstream', "refs/tags/$versionTag`:$upstreamTagRef", '--force')
-    $upstreamCommit = ([string](git rev-parse "$upstreamTagRef^{commit}")).Trim()
-    if (-not $upstreamCommit) {
-        throw "Unable to resolve upstream tag $versionTag to a commit."
-    }
-
-    $report.upstreamCommit = $upstreamCommit
-
-    git show-ref --verify --quiet "refs/heads/$candidateBranch"
-    if ($LASTEXITCODE -eq 0) {
-        throw "Local candidate branch already exists: $candidateBranch. Delete or rename it after reviewing the prior candidate; the pipeline will not reset it automatically."
-    }
-
-    Invoke-Checked git @('switch', '--detach', $upstreamCommit)
-    Invoke-Checked git @('switch', '-c', $candidateBranch)
-
-    $rootPackage = Get-Content -Raw -Path (Join-Path $repoRoot 'package.json') | ConvertFrom-Json
-    if ([string]$rootPackage.version -ne $versionNumber) {
-        throw "Upstream tag/package version mismatch: tag=$versionTag package=$($rootPackage.version)"
-    }
-    $report.upstreamPackageVersion = [string]$rootPackage.version
-
-    foreach ($patch in $registry.patches) {
-        $sha = [string]$patch.commit
-        Invoke-Checked git @('cat-file', '-e', "$sha^{commit}")
-
-        & git cherry-pick -x $sha
-        if ($LASTEXITCODE -ne 0) {
-            $report.state = 'PATCH_CONFLICT'
-            $report.failedPatch = @{
-                id = [string]$patch.id
-                commit = $sha
-                subject = [string]$patch.subject
-            }
-            $report.gitStatus = @(git status --short)
-            $report.nextAction = 'Resolve the cherry-pick conflict manually, run git cherry-pick --continue, then rerun the remaining validation commands. Do not install this candidate.'
-            Write-PipelineReport -Report $report -Path $reportPath
-            Write-Host "PATCH_CONFLICT=$($patch.id)"
-            Write-Host "REPORT=$reportPath"
-            exit 20
-        }
-
-        $report.patches += @{
-            id = [string]$patch.id
-            commit = $sha
-            subject = [string]$patch.subject
-            status = 'APPLIED'
-        }
-    }
-
-    Invoke-Checked git @('diff', '--check', "$upstreamCommit..HEAD")
-    $report.checks += @{ name = 'git_diff_check'; status = 'PASS'; range = "$upstreamCommit..HEAD" }
-
-    if (-not $SkipInstall) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'install', '--frozen-lockfile')
-        $report.checks += @{ name = 'pnpm_frozen_install'; status = 'PASS' }
-    }
-
-    $contractTests = @($registry.contractTests | ForEach-Object { [string]$_ })
-    $vitestArgs = @('pnpm@10.15.0', 'exec', 'vitest', 'run') + $contractTests + @(
-        '--exclude=.local-artifacts/**',
-        '--exclude=.worktrees/**',
-        '--exclude=.superpowers/**',
-        '--exclude=.kilo/**'
-    )
-    Invoke-Checked corepack $vitestArgs
-    $report.checks += @{ name = 'trader_patch_contract_tests'; status = 'PASS'; files = $contractTests }
-
-    Invoke-Checked corepack @('pnpm@10.15.0', 'typecheck')
-    $report.checks += @{ name = 'typecheck'; status = 'PASS' }
-
-    if (-not $SkipReleaseGate) {
-        Invoke-Checked powershell @(
-            '-NoProfile',
-            '-NonInteractive',
-            '-ExecutionPolicy', 'Bypass',
-            '-File', 'scripts/verify-release.ps1',
-            '-SkipWindowsPackaging'
-        )
-        $report.checks += @{ name = 'upstream_release_gate_without_windows_package'; status = 'PASS' }
-    }
-
-    Invoke-Checked corepack @('pnpm@10.15.0', 'build')
-    $report.checks += @{ name = 'build'; status = 'PASS' }
-
-    if (-not $SkipPackage) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'package:windows')
-        $report.checks += @{ name = 'package_windows'; status = 'PASS' }
-
-        $installerDir = Join-Path $repoRoot 'apps\desktop\dist\installers'
-        if (-not (Test-Path $installerDir)) {
-            throw "Windows package command completed but installer directory was not found: $installerDir"
-        }
-
-        $artifactFiles = @(
-            Get-ChildItem -Path $installerDir -File |
-                Where-Object {
-                    $_.Name -match '^lnwjud-(Setup|Portable)-' -or
-                    $_.Name -in @('SHA256SUMS.txt', 'PROVENANCE.json', 'latest.yml', 'portable.yml') -or
-                    $_.Name -like '*.blockmap'
-                } |
-                Sort-Object Name
-        )
-
-        foreach ($artifact in $artifactFiles) {
-            $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
-            $report.artifacts += @{
-                name = $artifact.Name
-                bytes = $artifact.Length
-                sha256 = $hash.Hash.ToLowerInvariant()
-            }
-        }
-    }
-
-    $candidateHead = (git rev-parse HEAD).Trim()
-    $report.candidateHead = $candidateHead
-    $report.state = 'PASS'
-    $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
-    $report.installAuthorizedByPipeline = $false
-    $report.promotionNote = 'PASS means candidate construction and validation succeeded. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed hash, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
-
-    if ($PushCandidate) {
-        Invoke-Checked git @('push', '--set-upstream', 'origin', $candidateBranch)
-        $report.candidatePushed = $true
-    }
-    else {
-        $report.candidatePushed = $false
-    }
-
-    Write-PipelineReport -Report $report -Path $reportPath
-
-    Write-Host "TRADER_LNWJUD_PATCH_PIPELINE=PASS"
-    Write-Host "UPSTREAM_TAG=$versionTag"
-    Write-Host "UPSTREAM_COMMIT=$upstreamCommit"
-    Write-Host "CANDIDATE_BRANCH=$candidateBranch"
-    Write-Host "CANDIDATE_HEAD=$candidateHead"
-    Write-Host "REPORT=$reportPath"
-    Write-Host 'INSTALL_AUTHORIZED=NO_EXPLICIT_PROMOTION_REQUIRED'
-}
-catch {
-    $report.state = 'FAILED'
-    $report.error = $_.Exception.Message
-    $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
-    $report.gitStatus = @(git status --short)
-    $report.nextAction = 'Inspect the exact failed command/evidence. Do not install this candidate and do not stop the Tunnel solely because this pipeline failed.'
-    Write-PipelineReport -Report $report -Path $reportPath
-    Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=FAILED'
-    Write-Host "REPORT=$reportPath"
-    throw
-}
-) {
+        if ($configuredFork -notmatch 'kobv99/lnwjud(?:\.git)?$') {
             throw "Existing trader-fork remote points somewhere else: $configuredFork"
         }
     }
 
-    Invoke-Checked git @('config', 'rerere.enabled', 'true')
-    Invoke-Checked git @('config', 'rerere.autoupdate', 'true')
+    Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'rerere.enabled', 'true')
+    Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'rerere.autoupdate', 'true')
 
     $gitUserName = ([string](git config user.name)).Trim()
     if (-not $gitUserName) {
-        Invoke-Checked git @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
+        Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
     }
+
     $gitUserEmail = ([string](git config user.email)).Trim()
     if (-not $gitUserEmail) {
-        Invoke-Checked git @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
+        Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
     }
 
-    Invoke-Checked git @('fetch', '--prune', 'origin', [string]$registry.patchBranch)
+    Invoke-Checked -FilePath 'git' -ArgumentList @('fetch', '--prune', 'trader-fork', [string]$registry.patchBranch)
 
     $upstreamTagRef = "refs/trader-upstream-tags/$versionTag"
-    Invoke-Checked git @('fetch', '--prune', 'upstream', "refs/tags/$versionTag`:$upstreamTagRef", '--force')
+    $tagFetchRefspec = ('refs/tags/' + $versionTag + ':' + $upstreamTagRef)
+    Invoke-Checked -FilePath 'git' -ArgumentList @('fetch', '--prune', 'trader-upstream', $tagFetchRefspec, '--force')
+
     $upstreamCommit = ([string](git rev-parse "$upstreamTagRef^{commit}")).Trim()
     if (-not $upstreamCommit) {
         throw "Unable to resolve upstream tag $versionTag to a commit."
@@ -459,13 +138,14 @@ catch {
 
     $report.upstreamCommit = $upstreamCommit
 
-    git show-ref --verify --quiet "refs/heads/$candidateBranch"
-    if ($LASTEXITCODE -eq 0) {
-        throw "Local candidate branch already exists: $candidateBranch. Delete or rename it after reviewing the prior candidate; the pipeline will not reset it automatically."
+    & git show-ref --verify --quiet "refs/heads/$candidateBranch"
+    $candidateExists = $LASTEXITCODE -eq 0
+    if ($candidateExists) {
+        throw "Local candidate branch already exists: $candidateBranch. Review/delete it explicitly before retrying; the pipeline will not reset it automatically."
     }
 
-    Invoke-Checked git @('switch', '--detach', $upstreamCommit)
-    Invoke-Checked git @('switch', '-c', $candidateBranch)
+    Invoke-Checked -FilePath 'git' -ArgumentList @('switch', '--detach', $upstreamCommit)
+    Invoke-Checked -FilePath 'git' -ArgumentList @('switch', '-c', $candidateBranch)
 
     $rootPackage = Get-Content -Raw -Path (Join-Path $repoRoot 'package.json') | ConvertFrom-Json
     if ([string]$rootPackage.version -ne $versionNumber) {
@@ -475,7 +155,7 @@ catch {
 
     foreach ($patch in $registry.patches) {
         $sha = [string]$patch.commit
-        Invoke-Checked git @('cat-file', '-e', "$sha^{commit}")
+        Invoke-Checked -FilePath 'git' -ArgumentList @('cat-file', '-e', "$sha^{commit}")
 
         & git cherry-pick -x $sha
         if ($LASTEXITCODE -ne 0) {
@@ -486,7 +166,7 @@ catch {
                 subject = [string]$patch.subject
             }
             $report.gitStatus = @(git status --short)
-            $report.nextAction = 'Resolve the cherry-pick conflict manually, run git cherry-pick --continue, then rerun the remaining validation commands. Do not install this candidate.'
+            $report.nextAction = 'Inspect whether upstream supersedes this patch. Resolve only after review, then continue the cherry-pick. Do not install this candidate.'
             Write-PipelineReport -Report $report -Path $reportPath
             Write-Host "PATCH_CONFLICT=$($patch.id)"
             Write-Host "REPORT=$reportPath"
@@ -501,43 +181,56 @@ catch {
         }
     }
 
-    Invoke-Checked git @('diff', '--check', "$upstreamCommit..HEAD")
-    $report.checks += @{ name = 'git_diff_check'; status = 'PASS'; range = "$upstreamCommit..HEAD" }
+    Invoke-Checked -FilePath 'git' -ArgumentList @('diff', '--check', "$upstreamCommit..HEAD")
+    $report.checks += @{
+        name = 'git_diff_check'
+        status = 'PASS'
+        range = "$upstreamCommit..HEAD"
+    }
 
-    if (-not $SkipInstall) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'install', '--frozen-lockfile')
+    if (-not $SkipDependencyInstall) {
+        Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'install', '--frozen-lockfile')
         $report.checks += @{ name = 'pnpm_frozen_install'; status = 'PASS' }
     }
 
     $contractTests = @($registry.contractTests | ForEach-Object { [string]$_ })
-    $vitestArgs = @('pnpm@10.15.0', 'exec', 'vitest', 'run') + $contractTests + @(
+    $vitestArgs = @('pnpm@10.15.0', 'exec', 'vitest', 'run')
+    $vitestArgs += $contractTests
+    $vitestArgs += @(
         '--exclude=.local-artifacts/**',
         '--exclude=.worktrees/**',
         '--exclude=.superpowers/**',
         '--exclude=.kilo/**'
     )
-    Invoke-Checked corepack $vitestArgs
-    $report.checks += @{ name = 'trader_patch_contract_tests'; status = 'PASS'; files = $contractTests }
+    Invoke-Checked -FilePath 'corepack' -ArgumentList $vitestArgs
+    $report.checks += @{
+        name = 'trader_patch_contract_tests'
+        status = 'PASS'
+        files = $contractTests
+    }
 
-    Invoke-Checked corepack @('pnpm@10.15.0', 'typecheck')
+    Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'typecheck')
     $report.checks += @{ name = 'typecheck'; status = 'PASS' }
 
     if (-not $SkipReleaseGate) {
-        Invoke-Checked powershell @(
+        Invoke-Checked -FilePath 'powershell' -ArgumentList @(
             '-NoProfile',
             '-NonInteractive',
             '-ExecutionPolicy', 'Bypass',
             '-File', 'scripts/verify-release.ps1',
             '-SkipWindowsPackaging'
         )
-        $report.checks += @{ name = 'upstream_release_gate_without_windows_package'; status = 'PASS' }
+        $report.checks += @{
+            name = 'upstream_release_gate_without_windows_package'
+            status = 'PASS'
+        }
     }
 
-    Invoke-Checked corepack @('pnpm@10.15.0', 'build')
+    Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'build')
     $report.checks += @{ name = 'build'; status = 'PASS' }
 
     if (-not $SkipPackage) {
-        Invoke-Checked corepack @('pnpm@10.15.0', 'package:windows')
+        Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'package:windows')
         $report.checks += @{ name = 'package_windows'; status = 'PASS' }
 
         $installerDir = Join-Path $repoRoot 'apps\desktop\dist\installers'
@@ -555,6 +248,19 @@ catch {
                 Sort-Object Name
         )
 
+        $requiredArtifacts = @(
+            "lnwjud-Setup-$versionNumber.exe",
+            "lnwjud-Portable-$versionNumber.exe",
+            'SHA256SUMS.txt',
+            'PROVENANCE.json'
+        )
+        $artifactNames = @($artifactFiles | ForEach-Object { $_.Name })
+        foreach ($requiredArtifact in $requiredArtifacts) {
+            if ($artifactNames -notcontains $requiredArtifact) {
+                throw "Required packaged artifact is missing: $requiredArtifact"
+            }
+        }
+
         foreach ($artifact in $artifactFiles) {
             $hash = Get-FileHash -Algorithm SHA256 -Path $artifact.FullName
             $report.artifacts += @{
@@ -565,15 +271,15 @@ catch {
         }
     }
 
-    $candidateHead = (git rev-parse HEAD).Trim()
+    $candidateHead = ([string](git rev-parse HEAD)).Trim()
     $report.candidateHead = $candidateHead
     $report.state = 'PASS'
     $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
     $report.installAuthorizedByPipeline = $false
-    $report.promotionNote = 'PASS means candidate construction and validation succeeded. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed hash, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
+    $report.promotionNote = 'PASS means candidate construction and validation succeeded. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed identity, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
 
     if ($PushCandidate) {
-        Invoke-Checked git @('push', '--set-upstream', 'origin', $candidateBranch)
+        Invoke-Checked -FilePath 'git' -ArgumentList @('push', '--set-upstream', 'trader-fork', $candidateBranch)
         $report.candidatePushed = $true
     }
     else {
@@ -582,7 +288,7 @@ catch {
 
     Write-PipelineReport -Report $report -Path $reportPath
 
-    Write-Host "TRADER_LNWJUD_PATCH_PIPELINE=PASS"
+    Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=PASS'
     Write-Host "UPSTREAM_TAG=$versionTag"
     Write-Host "UPSTREAM_COMMIT=$upstreamCommit"
     Write-Host "CANDIDATE_BRANCH=$candidateBranch"
