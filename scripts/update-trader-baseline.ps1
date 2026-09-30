@@ -93,20 +93,20 @@ try {
     Invoke-Checked git @('config', 'rerere.enabled', 'true')
     Invoke-Checked git @('config', 'rerere.autoupdate', 'true')
 
-    $gitUserName = (git config user.name).Trim()
+    $gitUserName = ([string](git config user.name)).Trim()
     if (-not $gitUserName) {
         Invoke-Checked git @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
     }
-    $gitUserEmail = (git config user.email).Trim()
+    $gitUserEmail = ([string](git config user.email)).Trim()
     if (-not $gitUserEmail) {
         Invoke-Checked git @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
     }
 
     Invoke-Checked git @('fetch', '--prune', 'origin', [string]$registry.patchBranch)
-    Invoke-Checked git @('fetch', '--prune', '--tags', 'upstream')
 
-    Invoke-Checked git @('rev-parse', '--verify', "refs/tags/$versionTag")
-    $upstreamCommit = (git rev-list -n 1 $versionTag).Trim()
+    $upstreamTagRef = "refs/trader-upstream-tags/$versionTag"
+    Invoke-Checked git @('fetch', '--prune', 'upstream', "refs/tags/$versionTag`:$upstreamTagRef", '--force')
+    $upstreamCommit = ([string](git rev-parse "$upstreamTagRef^{commit}")).Trim()
     if (-not $upstreamCommit) {
         throw "Unable to resolve upstream tag $versionTag to a commit."
     }
@@ -120,6 +120,12 @@ try {
 
     Invoke-Checked git @('switch', '--detach', $upstreamCommit)
     Invoke-Checked git @('switch', '-c', $candidateBranch)
+
+    $rootPackage = Get-Content -Raw -Path (Join-Path $repoRoot 'package.json') | ConvertFrom-Json
+    if ([string]$rootPackage.version -ne $versionNumber) {
+        throw "Upstream tag/package version mismatch: tag=$versionTag package=$($rootPackage.version)"
+    }
+    $report.upstreamPackageVersion = [string]$rootPackage.version
 
     foreach ($patch in $registry.patches) {
         $sha = [string]$patch.commit
@@ -149,8 +155,8 @@ try {
         }
     }
 
-    Invoke-Checked git @('diff', '--check')
-    $report.checks += @{ name = 'git_diff_check'; status = 'PASS' }
+    Invoke-Checked git @('diff', '--check', "$upstreamCommit..HEAD")
+    $report.checks += @{ name = 'git_diff_check'; status = 'PASS'; range = "$upstreamCommit..HEAD" }
 
     if (-not $SkipInstall) {
         Invoke-Checked corepack @('pnpm@10.15.0', 'install', '--frozen-lockfile')
