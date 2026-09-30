@@ -93,6 +93,15 @@ try {
     Invoke-Checked git @('config', 'rerere.enabled', 'true')
     Invoke-Checked git @('config', 'rerere.autoupdate', 'true')
 
+    $gitUserName = (git config user.name).Trim()
+    if (-not $gitUserName) {
+        Invoke-Checked git @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
+    }
+    $gitUserEmail = (git config user.email).Trim()
+    if (-not $gitUserEmail) {
+        Invoke-Checked git @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
+    }
+
     Invoke-Checked git @('fetch', '--prune', 'origin', [string]$registry.patchBranch)
     Invoke-Checked git @('fetch', '--prune', '--tags', 'upstream')
 
