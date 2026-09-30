@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "name": "Trader lnwjud patch stack",
+  "upstreamRepository": "engasnm111/lnwjud",
+  "forkRepository": "kobv99/lnwjud",
+  "patchBranch": "fix/klaus-mcp-contract-exposure",
+  "originalBaseline": {
+    "tag": "v5.4.3",
+    "commit": "dfda369b2921ccae4fd477c3fd76c84b9a05452f"
+  },
+  "patches": [
+    {
+      "id": "TRADER-R1-A",
+      "commit": "35abe6274b94596b48a4a090d712f96373098c41",
+      "subject": "fix(mcp): align profile and goal tool contracts",
+      "purpose": "Expose the required workspace registration, project profile dry-run, and Durable Goal MCP contracts."
+    },
+    {
+      "id": "TRADER-R1-B",
+      "commit": "54e9dc92cc7e850f3c5a1fcb1216851bcf362ae5",
+      "subject": "fix(mcp): report goal schemas as non-streamable",
+      "purpose": "Correct Durable Goal schema/discovery metadata including context-pressure streamability."
+    },
+    {
+      "id": "TRADER-R2",
+      "commit": "8d4e4769d5e3ca870a738a0670fe6e564a39fe2c",
+      "subject": "Fix workspace skill routing and checkpoint schema",
+      "purpose": "Bind skill discovery/preflight to the explicit workspace and publish checkpoint_goal schema variants faithfully."
+    }
+  ],
+  "contractTests": [
+    "packages/mcp-server/src/mcp-http.integration.test.ts",
+    "packages/mcp-server/src/server-tool-availability.test.ts",
+    "packages/mcp-server/src/tool-registry.test.ts",
+    "packages/mcp-server/src/upgrade-runtime.test.ts",
+    "packages/extensions/src/extensions-service.test.ts",
+    "packages/mcp-server/src/tools/extension-tools.test.ts",
+    "packages/mcp-server/src/tools/goal-tools.test.ts",
+    "apps/cli/src/runtime/stdio-mcp-runtime.test.ts",
+    "apps/desktop/tests/desktop-runtime.persistence.test.ts"
+  ],
+  "promotionPolicy": {
+    "officialAutoCheckAllowed": true,
+    "officialAutoDownloadAllowed": true,
+    "officialAutoInstallAllowed": false,
+    "stopTunnelOnlyAfterCandidatePass": true,
+    "installOnlyPatchedCandidate": true
+  }
+}
