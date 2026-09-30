@@ -28,6 +28,22 @@ function Invoke-Checked {
     }
 }
 
+function Get-CheckedOutput {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $false)]
+        [string[]]$ArgumentList = @()
+    )
+
+    $output = & $FilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+        throw "Command failed ($LASTEXITCODE): $FilePath $($ArgumentList -join ' ')"
+    }
+    return (($output | Out-String).Trim())
+}
+
 function Write-PipelineReport {
     param(
         [Parameter(Mandatory = $true)]
@@ -42,7 +58,7 @@ function Write-PipelineReport {
     $Report | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 -Path $Path
 }
 
-$repoRoot = ([string](git rev-parse --show-toplevel)).Trim()
+$repoRoot = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', '--show-toplevel')
 if (-not $repoRoot) {
     throw 'Run this script from inside an lnwjud Git worktree.'
 }
@@ -66,8 +82,8 @@ if (-not $versionTag.StartsWith('v')) {
 }
 $versionNumber = $versionTag.Substring(1)
 $candidateBranch = "trader/patched-$versionTag"
-$pipelineSourceBranch = ([string](git branch --show-current)).Trim()
-$pipelineSourceHead = ([string](git rev-parse HEAD)).Trim()
+$pipelineSourceBranch = ((& git branch --show-current) | Out-String).Trim()
+$pipelineSourceHead = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', 'HEAD')
 $reportRoot = Join-Path $repoRoot ".local-artifacts\trader-patch-pipeline\$versionTag"
 $reportPath = Join-Path $reportRoot 'PIPELINE_REPORT.json'
 
@@ -96,7 +112,7 @@ try {
         Invoke-Checked -FilePath 'git' -ArgumentList @('remote', 'add', 'trader-upstream', $upstreamUrl)
     }
     else {
-        $configuredUpstream = ([string](git remote get-url trader-upstream)).Trim()
+        $configuredUpstream = Get-CheckedOutput -FilePath 'git' -ArgumentList @('remote', 'get-url', 'trader-upstream')
         if ($configuredUpstream -notmatch 'engasnm111/lnwjud(?:\.git)?$') {
             throw "Existing trader-upstream remote points somewhere else: $configuredUpstream"
         }
@@ -106,7 +122,7 @@ try {
         Invoke-Checked -FilePath 'git' -ArgumentList @('remote', 'add', 'trader-fork', $forkUrl)
     }
     else {
-        $configuredFork = ([string](git remote get-url trader-fork)).Trim()
+        $configuredFork = Get-CheckedOutput -FilePath 'git' -ArgumentList @('remote', 'get-url', 'trader-fork')
         if ($configuredFork -notmatch 'kobv99/lnwjud(?:\.git)?$') {
             throw "Existing trader-fork remote points somewhere else: $configuredFork"
         }
@@ -115,12 +131,12 @@ try {
     Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'rerere.enabled', 'true')
     Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'rerere.autoupdate', 'true')
 
-    $gitUserName = ([string](git config user.name)).Trim()
+    $gitUserName = ((& git config user.name 2>$null) | Out-String).Trim()
     if (-not $gitUserName) {
         Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'user.name', 'Trader lnwjud Patch Pipeline')
     }
 
-    $gitUserEmail = ([string](git config user.email)).Trim()
+    $gitUserEmail = ((& git config user.email 2>$null) | Out-String).Trim()
     if (-not $gitUserEmail) {
         Invoke-Checked -FilePath 'git' -ArgumentList @('config', 'user.email', 'trader-lnwjud-pipeline@users.noreply.github.com')
     }
@@ -131,7 +147,7 @@ try {
     $tagFetchRefspec = ('refs/tags/' + $versionTag + ':' + $upstreamTagRef)
     Invoke-Checked -FilePath 'git' -ArgumentList @('fetch', '--prune', 'trader-upstream', $tagFetchRefspec, '--force')
 
-    $upstreamCommit = ([string](git rev-parse "$upstreamTagRef^{commit}")).Trim()
+    $upstreamCommit = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', "$upstreamTagRef^{commit}")
     if (-not $upstreamCommit) {
         throw "Unable to resolve upstream tag $versionTag to a commit."
     }
@@ -271,7 +287,7 @@ try {
         }
     }
 
-    $candidateHead = ([string](git rev-parse HEAD)).Trim()
+    $candidateHead = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', 'HEAD')
     $report.candidateHead = $candidateHead
     $report.state = 'PASS'
     $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
