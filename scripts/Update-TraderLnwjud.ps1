@@ -148,6 +148,7 @@ if (Test-Path -LiteralPath $manifestPath) {
 $timestamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
 $buildWorktree = Join-Path $commonRoot ('.worktrees\TRADER_PATCH_BUILD_' + $targetTag + '_' + $timestamp)
 $buildCreated = $false
+$buildSucceeded = $false
 
 try {
     Invoke-Checked -FilePath 'git' -ArgumentList @('worktree', 'add', '--detach', $buildWorktree, $pipelineHead)
@@ -180,6 +181,7 @@ try {
     if ($manifest.promotionEligible -ne $true) {
         throw "Candidate exists but is not promotion-eligible: $manifestPath"
     }
+    $buildSucceeded = $true
 
     Write-Host 'TRADER_LNWJUD_UPDATE=CANDIDATE_READY'
     Write-Host "TARGET_VERSION=$targetTag"
@@ -190,7 +192,7 @@ try {
     Write-Host "NEXT_ACTION=.\scripts\Promote-TraderLnwjud.ps1 -Version $targetTag"
 }
 finally {
-    if ($buildCreated) {
+    if ($buildCreated -and $buildSucceeded) {
         & git worktree remove $buildWorktree
         if ($LASTEXITCODE -ne 0) {
             Write-Warning "Candidate build worktree was preserved and requires manual review/removal: $buildWorktree"
