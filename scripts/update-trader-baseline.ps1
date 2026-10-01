@@ -58,6 +58,122 @@ function Write-PipelineReport {
     $Report | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 -Path $Path
 }
 
+function Assert-CosignVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    $versionText = (& $Path version 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        throw "cosign failed to run: $versionText"
+    }
+    if ($versionText -notmatch '(?m)(?:^|\s)v(\d+)\.(\d+)\.(\d+)(?:\s|$)') {
+        throw "Unable to parse cosign version: $versionText"
+    }
+
+    $major = [int]$Matches[1]
+    $minor = [int]$Matches[2]
+    $patch = [int]$Matches[3]
+    if (
+        $major -lt 3 -or
+        ($major -eq 3 -and $minor -lt 1) -or
+        ($major -eq 3 -and $minor -eq 1 -and $patch -lt 3)
+    ) {
+        throw "Sigstore provenance verification requires cosign >= 3.1.3; got v$major.$minor.$patch."
+    }
+
+    return "v$major.$minor.$patch"
+}
+
+function Resolve-TraderCosign {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $configured = $env:LNWJUD_COSIGN_PATH
+    if ($configured) {
+        if (-not (Test-Path -LiteralPath $configured -PathType Leaf)) {
+            throw "LNWJUD_COSIGN_PATH does not exist: $configured"
+        }
+        $resolved = (Resolve-Path -LiteralPath $configured).Path
+        $version = Assert-CosignVersion -Path $resolved
+        return [pscustomobject]@{
+            Path = $resolved
+            Source = 'environment'
+            Version = $version
+            Sha256 = (Get-FileHash -Algorithm SHA256 -Path $resolved).Hash.ToLowerInvariant()
+        }
+    }
+
+    $pathCommand = Get-Command cosign -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $pathCommand) {
+        $resolved = $pathCommand.Source
+        $version = Assert-CosignVersion -Path $resolved
+        return [pscustomobject]@{
+            Path = $resolved
+            Source = 'path'
+            Version = $version
+            Sha256 = (Get-FileHash -Algorithm SHA256 -Path $resolved).Hash.ToLowerInvariant()
+        }
+    }
+
+    $expectedSha256 = '9fe59be0eca1271873ce019061335eb1ac419b7059202e797828467ddabe33be'
+    $toolDir = Join-Path $RepoRoot '.local-artifacts\build-tools\cosign-v3.1.3'
+    $target = Join-Path $toolDir 'cosign-windows-amd64.exe'
+    New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
+
+    if (Test-Path -LiteralPath $target -PathType Leaf) {
+        $existingSha256 = (Get-FileHash -Algorithm SHA256 -Path $target).Hash.ToLowerInvariant()
+        if ($existingSha256 -eq $expectedSha256) {
+            $version = Assert-CosignVersion -Path $target
+            return [pscustomobject]@{
+                Path = $target
+                Source = 'pinned_cache'
+                Version = $version
+                Sha256 = $existingSha256
+            }
+        }
+    }
+
+    $download = "$target.download"
+    Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+    $url = 'https://github.com/sigstore/cosign/releases/download/v3.1.3/cosign-windows-amd64.exe'
+    $downloaded = $false
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $url -OutFile $download -UseBasicParsing
+            $downloaded = $true
+            break
+        }
+        catch {
+            if ($attempt -eq 4) {
+                throw
+            }
+            Start-Sleep -Seconds (2 * $attempt)
+        }
+    }
+    if (-not $downloaded) {
+        throw 'Failed to download pinned cosign v3.1.3.'
+    }
+
+    $actualSha256 = (Get-FileHash -Algorithm SHA256 -Path $download).Hash.ToLowerInvariant()
+    if ($actualSha256 -ne $expectedSha256) {
+        Remove-Item -LiteralPath $download -Force -ErrorAction SilentlyContinue
+        throw "cosign SHA-256 mismatch: expected $expectedSha256, got $actualSha256"
+    }
+
+    Move-Item -LiteralPath $download -Destination $target -Force
+    $version = Assert-CosignVersion -Path $target
+    return [pscustomobject]@{
+        Path = $target
+        Source = 'pinned_download'
+        Version = $version
+        Sha256 = $actualSha256
+    }
+}
+
 $repoRoot = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', '--show-toplevel')
 if (-not $repoRoot) {
     throw 'Run this script from inside an lnwjud Git worktree.'
@@ -307,6 +423,17 @@ try {
     $report.checks += @{ name = 'build'; status = 'PASS' }
 
     if (-not $SkipPackage) {
+        $cosign = Resolve-TraderCosign -RepoRoot $repoRoot
+        $env:LNWJUD_COSIGN_PATH = [string]$cosign.Path
+        $report.checks += @{
+            name = 'cosign_provenance_verifier'
+            status = 'PASS'
+            source = [string]$cosign.Source
+            version = [string]$cosign.Version
+            path = [string]$cosign.Path
+            sha256 = [string]$cosign.Sha256
+        }
+
         Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'package:windows')
         $report.checks += @{ name = 'package_windows'; status = 'PASS' }
 
