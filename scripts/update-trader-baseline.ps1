@@ -76,6 +76,7 @@ if (-not (Test-Path $registryPath)) {
 }
 
 $registry = Get-Content -Raw -Path $registryPath | ConvertFrom-Json
+$diagnosticMode = $SkipDependencyInstall -or $SkipReleaseGate -or $SkipPackage
 $versionTag = $Version
 if (-not $versionTag.StartsWith('v')) {
     $versionTag = "v$versionTag"
@@ -142,6 +143,8 @@ try {
     }
 
     Invoke-Checked -FilePath 'git' -ArgumentList @('fetch', '--prune', 'trader-fork', [string]$registry.patchBranch)
+    $patchBranchRef = "refs/remotes/trader-fork/$([string]$registry.patchBranch)"
+    Invoke-Checked -FilePath 'git' -ArgumentList @('rev-parse', '--verify', $patchBranchRef)
 
     $upstreamTagRef = "refs/trader-upstream-tags/$versionTag"
     $tagFetchRefspec = ('refs/tags/' + $versionTag + ':' + $upstreamTagRef)
@@ -153,6 +156,23 @@ try {
     }
 
     $report.upstreamCommit = $upstreamCommit
+
+    $patchBaselineCommit = [string]$registry.originalBaseline.commit
+    Invoke-Checked -FilePath 'git' -ArgumentList @('cat-file', '-e', "$patchBaselineCommit^{commit}")
+    & git merge-base --is-ancestor $patchBaselineCommit $upstreamCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Selected upstream $versionTag does not descend from the registered patch baseline $patchBaselineCommit."
+    }
+    $report.patchBaselineCommit = $patchBaselineCommit
+
+    foreach ($patch in $registry.patches) {
+        $registeredPatchSha = [string]$patch.commit
+        Invoke-Checked -FilePath 'git' -ArgumentList @('cat-file', '-e', "$registeredPatchSha^{commit}")
+        & git merge-base --is-ancestor $registeredPatchSha $patchBranchRef
+        if ($LASTEXITCODE -ne 0) {
+            throw "Registered patch $registeredPatchSha is not contained in $patchBranchRef."
+        }
+    }
 
     & git show-ref --verify --quiet "refs/heads/$candidateBranch"
     $candidateExists = $LASTEXITCODE -eq 0
@@ -225,20 +245,61 @@ try {
         files = $contractTests
     }
 
+    $cliFocused = $registry.focusedChecks.cliWorkspaceSkillRouting
+    Invoke-Checked -FilePath 'corepack' -ArgumentList @(
+        'pnpm@10.15.0', '--filter', [string]$cliFocused.package, 'exec', 'vitest', 'run',
+        [string]$cliFocused.file, '-t', [string]$cliFocused.testName
+    )
+    $report.checks += @{
+        name = 'stdio_workspace_skill_routing'
+        status = 'PASS'
+        file = [string]$cliFocused.file
+        testName = [string]$cliFocused.testName
+    }
+
+    $desktopFocused = $registry.focusedChecks.desktopWorkspaceSkillRouting
+    Invoke-Checked -FilePath 'corepack' -ArgumentList @(
+        'pnpm@10.15.0', '--filter', [string]$desktopFocused.package, 'exec', 'vitest', 'run',
+        '--config', [string]$desktopFocused.config,
+        [string]$desktopFocused.file, '-t', [string]$desktopFocused.testName
+    )
+    $report.checks += @{
+        name = 'desktop_workspace_skill_routing'
+        status = 'PASS'
+        file = [string]$desktopFocused.file
+        testName = [string]$desktopFocused.testName
+    }
+
     Invoke-Checked -FilePath 'corepack' -ArgumentList @('pnpm@10.15.0', 'typecheck')
     $report.checks += @{ name = 'typecheck'; status = 'PASS' }
 
     if (-not $SkipReleaseGate) {
-        Invoke-Checked -FilePath 'powershell' -ArgumentList @(
+        & powershell @(
             '-NoProfile',
             '-NonInteractive',
             '-ExecutionPolicy', 'Bypass',
             '-File', 'scripts/verify-release.ps1',
             '-SkipWindowsPackaging'
         )
+        if ($LASTEXITCODE -ne 0) {
+            $report.checks += @{
+                name = 'upstream_release_gate_without_windows_package'
+                status = 'FAILED'
+                exitCode = $LASTEXITCODE
+                disposition = 'REVIEW_REQUIRED'
+            }
+            Write-PipelineReport -Report $report -Path $reportPath
+            throw "Upstream release gate failed with exit code $LASTEXITCODE. Review the exact failing test/log; the pipeline does not waive or auto-rerun release-gate failures."
+        }
         $report.checks += @{
             name = 'upstream_release_gate_without_windows_package'
             status = 'PASS'
+        }
+    }
+    else {
+        $report.checks += @{
+            name = 'upstream_release_gate_without_windows_package'
+            status = 'SKIPPED_DIAGNOSTIC'
         }
     }
 
@@ -289,10 +350,16 @@ try {
 
     $candidateHead = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', 'HEAD')
     $report.candidateHead = $candidateHead
-    $report.state = 'PASS'
+    $report.state = if ($diagnosticMode) { 'PASS_DIAGNOSTIC' } else { 'PASS' }
     $report.completedAtUtc = [DateTime]::UtcNow.ToString('o')
     $report.installAuthorizedByPipeline = $false
-    $report.promotionNote = 'PASS means candidate construction and validation succeeded. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed identity, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
+    $report.promotionEligible = -not $diagnosticMode
+    $report.promotionNote = if ($diagnosticMode) {
+        'Diagnostic switches skipped one or more promotion gates. This candidate is not promotion-eligible.'
+    }
+    else {
+        'All candidate gates passed. Installation still requires an explicit maintenance window: stop Tunnel, install this patched candidate, verify installed identity, restart Tunnel, and run post-install MCP/Klaus smoke checks.'
+    }
 
     if ($PushCandidate) {
         Invoke-Checked -FilePath 'git' -ArgumentList @('push', '--set-upstream', 'trader-fork', $candidateBranch)
@@ -304,7 +371,12 @@ try {
 
     Write-PipelineReport -Report $report -Path $reportPath
 
-    Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=PASS'
+    if ($diagnosticMode) {
+        Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=PASS_DIAGNOSTIC'
+    }
+    else {
+        Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=PASS'
+    }
     Write-Host "UPSTREAM_TAG=$versionTag"
     Write-Host "UPSTREAM_COMMIT=$upstreamCommit"
     Write-Host "CANDIDATE_BRANCH=$candidateBranch"
