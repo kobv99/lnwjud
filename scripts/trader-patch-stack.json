@@ -1,31 +1,43 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "name": "Trader lnwjud patch stack",
   "upstreamRepository": "engasnm111/lnwjud",
   "forkRepository": "kobv99/lnwjud",
-  "patchBranch": "fix/klaus-mcp-contract-exposure",
+  "patchBranch": "trader/patch-stack-v5.7.2-r3",
   "originalBaseline": {
-    "tag": "v5.4.3",
-    "commit": "dfda369b2921ccae4fd477c3fd76c84b9a05452f"
+    "tag": "v5.7.2",
+    "commit": "88efa21ae4c7301980499cafcc2fb507a3eba760"
   },
   "patches": [
     {
-      "id": "TRADER-R1-A",
-      "commit": "35abe6274b94596b48a4a090d712f96373098c41",
+      "id": "TRADER-R3-01",
+      "commit": "fbbaee22",
       "subject": "fix(mcp): align profile and goal tool contracts",
-      "purpose": "Expose the required workspace registration, project profile dry-run, and Durable Goal MCP contracts."
+      "purpose": "Adapt the R1-A MCP workspace/profile/Durable Goal contract exposure fix to the v5.7.2 source tree."
     },
     {
-      "id": "TRADER-R1-B",
-      "commit": "54e9dc92cc7e850f3c5a1fcb1216851bcf362ae5",
+      "id": "TRADER-R3-02",
+      "commit": "83198b6b",
       "subject": "fix(mcp): report goal schemas as non-streamable",
-      "purpose": "Correct Durable Goal schema/discovery metadata including context-pressure streamability."
+      "purpose": "Adapt the R1-B Durable Goal schema/discovery streamability fix to the v5.7.2 source tree."
     },
     {
-      "id": "TRADER-R2",
-      "commit": "8d4e4769d5e3ca870a738a0670fe6e564a39fe2c",
+      "id": "TRADER-R3-03",
+      "commit": "def1131f",
       "subject": "Fix workspace skill routing and checkpoint schema",
-      "purpose": "Bind skill discovery/preflight to the explicit workspace and publish checkpoint_goal schema variants faithfully."
+      "purpose": "Adapt R2 explicit workspace skill routing, run_goal workspace-bound preflight, and checkpoint schema fidelity to v5.7.2."
+    },
+    {
+      "id": "TRADER-R3-04",
+      "commit": "2328e403",
+      "subject": "fix(trader): adapt patch contracts to lnwjud v5.7.2",
+      "purpose": "Resolve v5.7.2 contract overlap while preserving upstream Engineering Harness behavior and Durable Goal discovery/schema exposure."
+    },
+    {
+      "id": "TRADER-R3-05",
+      "commit": "d57e7f9c",
+      "subject": "fix(trader): satisfy v5.7.2 lint contract",
+      "purpose": "Keep the adapted v5.7.2 patch stack compliant with current lint/type contracts."
     }
   ],
   "contractTests": [
@@ -35,15 +47,28 @@
     "packages/mcp-server/src/upgrade-runtime.test.ts",
     "packages/extensions/src/extensions-service.test.ts",
     "packages/mcp-server/src/tools/extension-tools.test.ts",
-    "packages/mcp-server/src/tools/goal-tools.test.ts",
-    "apps/cli/src/runtime/stdio-mcp-runtime.test.ts",
-    "apps/desktop/tests/desktop-runtime.persistence.test.ts"
+    "packages/mcp-server/src/tools/goal-tools.test.ts"
   ],
+  "focusedChecks": {
+    "cliWorkspaceSkillRouting": {
+      "package": "@lnwjud/cli",
+      "file": "src/runtime/stdio-mcp-runtime.test.ts",
+      "testName": "routes explicit skill discovery to the requested registered workspace while preserving the default workspace"
+    },
+    "desktopWorkspaceSkillRouting": {
+      "package": "@lnwjud/desktop",
+      "config": "vitest.config.ts",
+      "file": "tests/desktop-runtime.persistence.test.ts",
+      "testName": "routes explicit skill discovery to the requested registered workspace instead of the selected workspace"
+    }
+  },
   "promotionPolicy": {
     "officialAutoCheckAllowed": true,
     "officialAutoDownloadAllowed": true,
     "officialAutoInstallAllowed": false,
     "stopTunnelOnlyAfterCandidatePass": true,
-    "installOnlyPatchedCandidate": true
+    "installOnlyPatchedCandidate": true,
+    "releaseGateFailureRequiresReview": true,
+    "releaseGateFailureMayNotBeSilentlyWaived": true
   }
 }
