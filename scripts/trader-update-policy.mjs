@@ -1,3 +1,4 @@
+/* global console, process */
 import { DatabaseSync } from 'node:sqlite';
 
 function arg(name) {
@@ -67,7 +68,9 @@ try {
 } catch (error) {
   try {
     db.exec('ROLLBACK');
-  } catch {}
+  } catch {
+    // Transaction may already be closed if BEGIN or COMMIT failed.
+  }
   console.error(error instanceof Error ? error.stack ?? error.message : String(error));
   process.exitCode = 1;
 } finally {
