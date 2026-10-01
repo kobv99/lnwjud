@@ -52,6 +52,15 @@ jobs:
           & powershell @args
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Upload pipeline report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trader-lnwjud-report-${{ inputs.version }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: .local-artifacts/trader-patch-pipeline/**/PIPELINE_REPORT.json
+
       - name: Upload patched Windows candidate
         if: success()
         uses: actions/upload-artifact@v7
@@ -67,4 +76,3 @@ jobs:
             apps/desktop/dist/installers/portable.yml
             apps/desktop/dist/installers/SHA256SUMS.txt
             apps/desktop/dist/installers/PROVENANCE.json
-            .local-artifacts/trader-patch-pipeline/**/PIPELINE_REPORT.json
