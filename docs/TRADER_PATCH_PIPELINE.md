@@ -31,7 +31,15 @@ The older v5.4.3 R1/R2 commits remain historical provenance. New candidates use 
 
 ## Local one-command candidate build
 
-Run from a clean fork worktree:
+Normal operator entry point:
+
+```powershell
+.\scripts\Update-TraderLnwjud.ps1 -Latest
+```
+
+The wrapper reads the installed lnwjud version, resolves the newest stable upstream `vX.Y.Z` tag, leaves the management worktree untouched, creates an isolated build worktree, invokes the exact-version builder, and publishes a promotion-eligible candidate bundle under `.trader-lnwjud/candidates/vX.Y.Z/`. It never installs the candidate. Use `-PlanOnly` to inspect the decision without building.
+
+The lower-level exact-version builder remains available for investigation:
 
 ```powershell
 .\scripts\update-trader-baseline.ps1 -Version v5.7.2
@@ -115,7 +123,15 @@ Git `rerere` is enabled so equivalent future conflicts can reuse a previously re
 
 ## Promotion to the installed Trader runtime
 
-The official updater may perform version checks and downloads while the current Tunnel/runtime stays online. Installation is a separate explicit maintenance window.
+Promotion is a separate command and therefore a separate authority boundary:
+
+```powershell
+.\scripts\Promote-TraderLnwjud.ps1 -Latest
+```
+
+If lnwjud or the Secure MCP Tunnel is still running, the command records the pending promotion and returns without mutation. Stop the Tunnel and fully exit lnwjud, then rerun the same command. It snapshots the current installation and data directory, installs only the Trader-patched candidate, enforces the Trader updater policy, verifies installed version identity, and runs MCP stdio plus Durable Goal lifecycle smoke. If the Tunnel was running before the maintenance window, the command launches lnwjud and asks for the Tunnel to be started manually; rerun the same command once more to verify the Tunnel and finalize the known-good baseline. `-Rollback` restores the registered pre-promotion snapshot while lnwjud and the Tunnel are stopped.
+
+The official updater remains discovery-only for Trader. Installation is a separate explicit maintenance window.
 
 ```text
 UPSTREAM RELEASE DETECTED / DOWNLOADED
@@ -154,10 +170,14 @@ If any post-install smoke check fails, the new build is not promoted. Preserve t
 ## Auto-update policy
 
 ```text
-AUTO CHECK       = allowed
-AUTO DOWNLOAD    = allowed
-AUTO INSTALL     = not a Trader promotion path
-AUTO PROMOTION   = no
+AUTO CHECK       = ON
+CHECK ON STARTUP = ON
+CHECK INTERVAL   = 30 minutes
+AUTO DOWNLOAD    = OFF
+AUTO INSTALL     = NO
+AUTO PROMOTION   = NO
 ```
+
+The promotion command persists this policy directly in the lnwjud settings database while the runtime is stopped. Upstream update notifications remain available, but official packages are not downloaded or installed automatically. The Trader pipeline fetches the exact upstream Git tag and builds the patched candidate instead.
 
 Stopping the Tunnel is intentionally late. Candidate construction and validation happen first so a failed upstream/patch integration never interrupts the currently certified runtime.

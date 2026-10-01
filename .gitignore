@@ -28,6 +28,7 @@ coverage/
 test-results/
 artifacts/
 .local-artifacts/
+.trader-lnwjud/
 
 # Environment Variables & Secrets
 .env

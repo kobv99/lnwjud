@@ -178,6 +178,8 @@ $repoRoot = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', '--sh
 if (-not $repoRoot) {
     throw 'Run this script from inside an lnwjud Git worktree.'
 }
+$gitCommonDir = Get-CheckedOutput -FilePath 'git' -ArgumentList @('rev-parse', '--path-format=absolute', '--git-common-dir')
+$commonRoot = Split-Path -Parent $gitCommonDir
 
 Set-Location $repoRoot
 
@@ -497,6 +499,52 @@ try {
     }
 
     Write-PipelineReport -Report $report -Path $reportPath
+
+    if (-not $diagnosticMode) {
+        $candidateStore = Join-Path $commonRoot ".trader-lnwjud\candidates\$versionTag"
+        $manifestPath = Join-Path $candidateStore 'CANDIDATE_MANIFEST.json'
+        if (Test-Path -LiteralPath $candidateStore) {
+            throw "Shared candidate store already exists for $($versionTag): $candidateStore"
+        }
+
+        New-Item -ItemType Directory -Force -Path $candidateStore | Out-Null
+        foreach ($artifact in $artifactFiles) {
+            Copy-Item -LiteralPath $artifact.FullName -Destination (Join-Path $candidateStore $artifact.Name)
+        }
+
+        $setupName = "lnwjud-Setup-$versionNumber.exe"
+        $portableName = "lnwjud-Portable-$versionNumber.exe"
+        $setupPath = Join-Path $candidateStore $setupName
+        $portablePath = Join-Path $candidateStore $portableName
+        $setupSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $setupPath).Hash.ToLowerInvariant()
+        $portableSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $portablePath).Hash.ToLowerInvariant()
+
+        $manifest = [ordered]@{
+            schemaVersion = 1
+            versionTag = $versionTag
+            version = $versionNumber
+            upstreamCommit = $upstreamCommit
+            candidateHead = $candidateHead
+            candidateBranch = $candidateBranch
+            pipelineSourceHead = $pipelineSourceHead
+            pipelineSourceBranch = $pipelineSourceBranch
+            promotionEligible = $true
+            setupPath = $setupPath
+            setupSha256 = $setupSha256
+            portablePath = $portablePath
+            portableSha256 = $portableSha256
+            pipelineReportPath = (Join-Path $candidateStore 'PIPELINE_REPORT.json')
+            provenancePath = (Join-Path $candidateStore 'PROVENANCE.json')
+            sha256SumsPath = (Join-Path $candidateStore 'SHA256SUMS.txt')
+            createdAtUtc = [DateTime]::UtcNow.ToString('o')
+        }
+
+        $report.sharedCandidateStore = $candidateStore
+        $report.sharedCandidateManifest = $manifestPath
+        Write-PipelineReport -Report $report -Path $reportPath
+        Copy-Item -LiteralPath $reportPath -Destination (Join-Path $candidateStore 'PIPELINE_REPORT.json')
+        $manifest | ConvertTo-Json -Depth 10 | Set-Content -Encoding UTF8 -LiteralPath $manifestPath
+    }
 
     if ($diagnosticMode) {
         Write-Host 'TRADER_LNWJUD_PATCH_PIPELINE=PASS_DIAGNOSTIC'
