@@ -8,7 +8,9 @@ param(
     [switch]$Latest,
 
     [switch]$PlanOnly,
-    [switch]$Rollback
+    [switch]$Rollback,
+    [switch]$ConfirmExternalSmoke,
+    [string]$SmokeEvidence
 )
 
 Set-StrictMode -Version Latest
@@ -231,18 +233,28 @@ if (-not (Test-Path -LiteralPath $pendingPath)) {
     Write-Json -Value $pending -Path $pendingPath
 }
 
-if ($pending.stage -eq 'awaiting_tunnel') {
+if ($pending.stage -eq 'awaiting_external_smoke') {
     $runtime = Get-RuntimeState
-    if (-not $runtime.AppRunning -or -not $runtime.TunnelRunning) {
-        Write-Host 'TRADER_LNWJUD_PROMOTION=AWAITING_TUNNEL'
+    if (-not $runtime.AppRunning -or ($pending.tunnelWasRunning -eq $true -and -not $runtime.TunnelRunning)) {
+        Write-Host 'TRADER_LNWJUD_PROMOTION=AWAITING_RUNTIME_RECONNECT'
         Write-Host "TARGET_VERSION=$targetTag"
-        Write-Host 'ACTION=Open lnwjud, start the Secure MCP Tunnel, then rerun this same promotion command.'
+        Write-Host 'ACTION=Open lnwjud and start the Secure MCP Tunnel if it was previously in use.'
         exit 0
     }
 
     $installedVersion = Get-InstalledVersion -Exe $installedExe
     if ((Convert-ToSemVer -Value $installedVersion) -ne (Convert-ToSemVer -Value $targetVersionText)) {
-        throw "Installed version changed during tunnel verification: $installedVersion"
+        throw "Installed version changed during external smoke verification: $installedVersion"
+    }
+
+    if (-not $ConfirmExternalSmoke) {
+        Write-Host 'TRADER_LNWJUD_PROMOTION=AWAITING_EXTERNAL_SMOKE'
+        Write-Host "TARGET_VERSION=$targetTag"
+        Write-Host 'ACTION=Run the real Klaus/MCP contract and Durable Goal smoke through the reconnected runtime, then rerun with -ConfirmExternalSmoke -SmokeEvidence <evidence>.'
+        exit 0
+    }
+    if ([string]::IsNullOrWhiteSpace($SmokeEvidence)) {
+        throw '-ConfirmExternalSmoke requires non-empty -SmokeEvidence.'
     }
 
     $baseline = [pscustomobject]@{
@@ -254,6 +266,7 @@ if ($pending.stage -eq 'awaiting_tunnel') {
         installedExeSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedExe).Hash.ToLowerInvariant()
         installedAppAsarSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installRoot 'resources\app.asar')).Hash.ToLowerInvariant()
         rollbackPath = [string]$pending.rollbackPath
+        externalSmokeEvidence = $SmokeEvidence
         promotedAtUtc = [DateTime]::UtcNow.ToString('o')
         updatePolicy = @{
             autoCheck = $true
@@ -309,14 +322,6 @@ try {
     & node $policyScript --db $dataDb --interval-minutes 30
     if ($LASTEXITCODE -ne 0) { throw 'Trader update policy persistence failed.' }
 
-    if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules'))) {
-        & corepack pnpm@10.15.0 install --frozen-lockfile
-        if ($LASTEXITCODE -ne 0) { throw 'Dependency install for post-install smoke failed.' }
-    }
-
-    $smokeScript = Join-Path $PSScriptRoot 'trader-postinstall-smoke.mjs'
-    & node $smokeScript --exe $installedExe --workspace $commonRoot
-    if ($LASTEXITCODE -ne 0) { throw 'Post-install MCP/Durable Goal smoke failed.' }
 }
 catch {
     $message = $_.Exception.Message
@@ -336,36 +341,16 @@ catch {
 
 Start-Process -FilePath $installedExe | Out-Null
 
-if ($pending.tunnelWasRunning -eq $true) {
-    $pending.stage = 'awaiting_tunnel'
-    $pending.installedAtUtc = [DateTime]::UtcNow.ToString('o')
-    Write-Json -Value $pending -Path $pendingPath
-    Write-Host 'TRADER_LNWJUD_PROMOTION=LOCAL_SMOKE_PASS'
-    Write-Host "TARGET_VERSION=$targetTag"
-    Write-Host 'UPDATE_POLICY=AUTO_CHECK_ON_AUTO_DOWNLOAD_OFF'
-    Write-Host 'ACTION=Start the Secure MCP Tunnel in lnwjud, then rerun this same promotion command to finalize the baseline.'
-    exit 0
-}
+$pending.stage = 'awaiting_external_smoke'
+$pending.installedAtUtc = [DateTime]::UtcNow.ToString('o')
+Write-Json -Value $pending -Path $pendingPath
 
-$baseline = [pscustomobject]@{
-    schemaVersion = 1
-    version = $targetTag
-    candidateHead = [string]$manifest.candidateHead
-    upstreamCommit = [string]$manifest.upstreamCommit
-    setupSha256 = [string]$manifest.setupSha256
-    installedExeSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $installedExe).Hash.ToLowerInvariant()
-    installedAppAsarSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $installRoot 'resources\app.asar')).Hash.ToLowerInvariant()
-    rollbackPath = [string]$pending.rollbackPath
-    promotedAtUtc = [DateTime]::UtcNow.ToString('o')
-    updatePolicy = @{
-        autoCheck = $true
-        checkOnStartup = $true
-        intervalMinutes = 30
-        autoDownload = $false
-    }
+Write-Host 'TRADER_LNWJUD_PROMOTION=LOCAL_INSTALL_VERIFIED'
+Write-Host "TARGET_VERSION=$targetTag"
+Write-Host 'UPDATE_POLICY=AUTO_CHECK_ON_AUTO_DOWNLOAD_OFF'
+if ($pending.tunnelWasRunning -eq $true) {
+    Write-Host 'ACTION=Start the Secure MCP Tunnel, run the real Klaus/MCP contract and Durable Goal smoke, then rerun with -ConfirmExternalSmoke -SmokeEvidence <evidence>.'
 }
-Write-Json -Value $baseline -Path $baselinePath
-Remove-Item -LiteralPath $pendingPath -Force
-Write-Host 'TRADER_LNWJUD_PROMOTION=PASS'
-Write-Host "NEW_BASELINE=$targetTag"
-Write-Host "BASELINE_MANIFEST=$baselinePath"
+else {
+    Write-Host 'ACTION=Run the real MCP contract and Durable Goal smoke, then rerun with -ConfirmExternalSmoke -SmokeEvidence <evidence>.'
+}

@@ -129,7 +129,7 @@ Promotion is a separate command and therefore a separate authority boundary:
 .\scripts\Promote-TraderLnwjud.ps1 -Latest
 ```
 
-If lnwjud or the Secure MCP Tunnel is still running, the command records the pending promotion and returns without mutation. Stop the Tunnel and fully exit lnwjud, then rerun the same command. It snapshots the current installation and data directory, installs only the Trader-patched candidate, enforces the Trader updater policy, verifies installed version identity, and runs MCP stdio plus Durable Goal lifecycle smoke. If the Tunnel was running before the maintenance window, the command launches lnwjud and asks for the Tunnel to be started manually; rerun the same command once more to verify the Tunnel and finalize the known-good baseline. `-Rollback` restores the registered pre-promotion snapshot while lnwjud and the Tunnel are stopped.
+If lnwjud or the Secure MCP Tunnel is still running, the command records the pending promotion and returns without mutation. Stop the Tunnel and fully exit lnwjud, then rerun the same command. It snapshots the current installation and data directory, installs only the Trader-patched candidate, enforces the Trader updater policy, verifies installed version identity, and restarts lnwjud. The known-good baseline is not finalized until the reconnected production path has passed the real Klaus/MCP contract and Durable Goal smoke. Record that evidence by rerunning the same command with `-ConfirmExternalSmoke -SmokeEvidence <evidence>`. `-Rollback` restores the registered pre-promotion snapshot while lnwjud and the Tunnel are stopped.
 
 The official updater remains discovery-only for Trader. Installation is a separate explicit maintenance window.
 
