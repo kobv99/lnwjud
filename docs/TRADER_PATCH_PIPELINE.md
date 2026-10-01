@@ -56,12 +56,15 @@ The script:
 15. runs TypeScript typecheck;
 16. runs the upstream release gate with Windows packaging skipped;
 17. builds the workspace;
-18. builds the Windows package;
-19. hashes required artifacts and writes `PIPELINE_REPORT.json`.
+18. resolves a trusted `cosign >= 3.1.3`; if neither `LNWJUD_COSIGN_PATH` nor PATH provides one, downloads the pinned Windows v3.1.3 binary into `.local-artifacts`, verifies its hard-coded SHA-256, and only then uses it;
+19. builds the Windows package;
+20. hashes required artifacts and writes `PIPELINE_REPORT.json`.
 
 Use `-PushCandidate` only when the candidate branch should be published after every required gate passes. The default is local-only.
 
 Diagnostic switches `-SkipDependencyInstall`, `-SkipReleaseGate`, and `-SkipPackage` are investigation-only. If any is used, the report state is `PASS_DIAGNOSTIC` and `promotionEligible=false`.
+
+Local packaging does not require a system-wide cosign installation. An explicitly configured `LNWJUD_COSIGN_PATH` or PATH binary is version-checked; otherwise the pipeline bootstraps the exact pinned v3.1.3 Windows binary into the ignored local artifact cache and verifies SHA-256 before execution.
 
 ## Release-gate failure policy
 
