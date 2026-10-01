@@ -222,7 +222,7 @@ describe('MCP tool registry', () => {
 
   it('keeps canonical Durable Goal tools in the effective surface and hides disabled tools from discovery', async () => {
     let snapshot: ToolAvailabilitySnapshot = { version: 1, generation: 0, overrides: {} };
-    const registry = new ToolRegistry({}, actor, { toolAvailabilitySnapshotProvider: () => snapshot });
+    const registry = new ToolRegistry({}, actor, { toolAvailabilitySnapshotProvider: (): ToolAvailabilitySnapshot => snapshot });
     const goalTools = ['run_goal', 'get_goal', 'get_goal_plan', 'checkpoint_goal', 'finish_goal', 'context_pressure'];
     const inventory = new Set(registry.listAll().map((tool) => tool.name));
     for (const name of goalTools) {

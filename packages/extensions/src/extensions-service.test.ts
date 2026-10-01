@@ -98,7 +98,7 @@ describe('LocalExtensionsService MCP bridge', () => {
       const service = new LocalExtensionsService({
         settings: DEFAULT_EXTENSIONS_SETTINGS,
         homeDir: home,
-        workspaceRootProvider: async (workspaceId?: string) => workspaceId === undefined
+        workspaceRootProvider: async (workspaceId?: string): Promise<string | undefined> => workspaceId === undefined
           ? workspaceA
           : workspaceRoots[workspaceId],
       });
