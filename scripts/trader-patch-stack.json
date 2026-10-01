@@ -11,31 +11,31 @@
   "patches": [
     {
       "id": "TRADER-R3-01",
-      "commit": "fbbaee22",
+      "commit": "fbbaee22a3b59794e914817423864b7f0878191a",
       "subject": "fix(mcp): align profile and goal tool contracts",
       "purpose": "Adapt the R1-A MCP workspace/profile/Durable Goal contract exposure fix to the v5.7.2 source tree."
     },
     {
       "id": "TRADER-R3-02",
-      "commit": "83198b6b",
+      "commit": "83198b6bad6da7dd1e55f0d11d7545d5c65721d0",
       "subject": "fix(mcp): report goal schemas as non-streamable",
       "purpose": "Adapt the R1-B Durable Goal schema/discovery streamability fix to the v5.7.2 source tree."
     },
     {
       "id": "TRADER-R3-03",
-      "commit": "def1131f",
+      "commit": "def1131fdbd752c991bfead82ce91eb14ac0fc67",
       "subject": "Fix workspace skill routing and checkpoint schema",
       "purpose": "Adapt R2 explicit workspace skill routing, run_goal workspace-bound preflight, and checkpoint schema fidelity to v5.7.2."
     },
     {
       "id": "TRADER-R3-04",
-      "commit": "2328e403",
+      "commit": "2328e403790f3128fa16f1aa38b699d9b7aa76b4",
       "subject": "fix(trader): adapt patch contracts to lnwjud v5.7.2",
       "purpose": "Resolve v5.7.2 contract overlap while preserving upstream Engineering Harness behavior and Durable Goal discovery/schema exposure."
     },
     {
       "id": "TRADER-R3-05",
-      "commit": "d57e7f9c",
+      "commit": "d57e7f9cd87860c4ddece6b6ff12b5b29f0d94cb",
       "subject": "fix(trader): satisfy v5.7.2 lint contract",
       "purpose": "Keep the adapted v5.7.2 patch stack compliant with current lint/type contracts."
     }
