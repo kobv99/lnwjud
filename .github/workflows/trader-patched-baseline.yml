@@ -1,0 +1,78 @@
+name: Trader Patched lnwjud Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact upstream release tag to patch, for example v5.7.2'
+        required: true
+        default: 'v5.7.2'
+        type: string
+      push_candidate:
+        description: 'Push trader/patched-vX.Y.Z only after every gate passes'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: trader-patched-lnwjud-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  build-windows-candidate:
+    name: Build Trader patched ${{ inputs.version }}
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout fork maintenance branch
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Enable Corepack and pnpm
+        shell: pwsh
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.15.0 --activate
+
+      - name: Build patched upstream candidate
+        shell: pwsh
+        run: |
+          $args = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/update-trader-baseline.ps1', '-Version', '${{ inputs.version }}')
+          if ('${{ inputs.push_candidate }}' -eq 'true') { $args += '-PushCandidate' }
+          & powershell @args
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload pipeline report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trader-lnwjud-report-${{ inputs.version }}-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: .local-artifacts/trader-patch-pipeline/**/PIPELINE_REPORT.json
+
+      - name: Upload patched Windows candidate
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: trader-lnwjud-${{ inputs.version }}-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/dist/installers/lnwjud-Setup-*.exe
+            apps/desktop/dist/installers/lnwjud-Setup-*.exe.blockmap
+            apps/desktop/dist/installers/lnwjud-Portable-*.exe
+            apps/desktop/dist/installers/latest.yml
+            apps/desktop/dist/installers/portable.yml
+            apps/desktop/dist/installers/SHA256SUMS.txt
+            apps/desktop/dist/installers/PROVENANCE.json

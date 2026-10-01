@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 2,
+  "name": "Trader lnwjud patch stack",
+  "upstreamRepository": "engasnm111/lnwjud",
+  "forkRepository": "kobv99/lnwjud",
+  "patchBranch": "trader/patch-stack-v5.7.2-r3",
+  "originalBaseline": {
+    "tag": "v5.7.2",
+    "commit": "88efa21ae4c7301980499cafcc2fb507a3eba760"
+  },
+  "patches": [
+    {
+      "id": "TRADER-R3-01",
+      "commit": "fbbaee22a3b59794e914817423864b7f0878191a",
+      "subject": "fix(mcp): align profile and goal tool contracts",
+      "purpose": "Adapt the R1-A MCP workspace/profile/Durable Goal contract exposure fix to the v5.7.2 source tree."
+    },
+    {
+      "id": "TRADER-R3-02",
+      "commit": "83198b6bad6da7dd1e55f0d11d7545d5c65721d0",
+      "subject": "fix(mcp): report goal schemas as non-streamable",
+      "purpose": "Adapt the R1-B Durable Goal schema/discovery streamability fix to the v5.7.2 source tree."
+    },
+    {
+      "id": "TRADER-R3-03",
+      "commit": "def1131fdbd752c991bfead82ce91eb14ac0fc67",
+      "subject": "Fix workspace skill routing and checkpoint schema",
+      "purpose": "Adapt R2 explicit workspace skill routing, run_goal workspace-bound preflight, and checkpoint schema fidelity to v5.7.2."
+    },
+    {
+      "id": "TRADER-R3-04",
+      "commit": "2328e403790f3128fa16f1aa38b699d9b7aa76b4",
+      "subject": "fix(trader): adapt patch contracts to lnwjud v5.7.2",
+      "purpose": "Resolve v5.7.2 contract overlap while preserving upstream Engineering Harness behavior and Durable Goal discovery/schema exposure."
+    },
+    {
+      "id": "TRADER-R3-05",
+      "commit": "d57e7f9cd87860c4ddece6b6ff12b5b29f0d94cb",
+      "subject": "fix(trader): satisfy v5.7.2 lint contract",
+      "purpose": "Keep the adapted v5.7.2 patch stack compliant with current lint/type contracts."
+    }
+  ],
+  "contractTests": [
+    "packages/mcp-server/src/mcp-http.integration.test.ts",
+    "packages/mcp-server/src/server-tool-availability.test.ts",
+    "packages/mcp-server/src/tool-registry.test.ts",
+    "packages/mcp-server/src/upgrade-runtime.test.ts",
+    "packages/extensions/src/extensions-service.test.ts",
+    "packages/mcp-server/src/tools/extension-tools.test.ts",
+    "packages/mcp-server/src/tools/goal-tools.test.ts"
+  ],
+  "focusedChecks": {
+    "cliWorkspaceSkillRouting": {
+      "package": "@lnwjud/cli",
+      "file": "src/runtime/stdio-mcp-runtime.test.ts",
+      "testName": "routes explicit skill discovery to the requested registered workspace while preserving the default workspace"
+    },
+    "desktopWorkspaceSkillRouting": {
+      "package": "@lnwjud/desktop",
+      "config": "vitest.config.ts",
+      "file": "tests/desktop-runtime.persistence.test.ts",
+      "testName": "routes explicit skill discovery to the requested registered workspace instead of the selected workspace"
+    }
+  },
+  "promotionPolicy": {
+    "officialAutoCheckAllowed": true,
+    "officialAutoDownloadAllowed": true,
+    "officialAutoInstallAllowed": false,
+    "stopTunnelOnlyAfterCandidatePass": true,
+    "installOnlyPatchedCandidate": true,
+    "releaseGateFailureRequiresReview": true,
+    "releaseGateFailureMayNotBeSilentlyWaived": true
+  }
+}
