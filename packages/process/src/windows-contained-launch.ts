@@ -28,18 +28,18 @@ export async function prepareWindowsContainedLaunch(input: {
   if (![input.directory, input.executable, input.cwd].every((value) => path.isAbsolute(value))) throw new Error('WINDOWS_CONTAINMENT_ABSOLUTE_PATH_REQUIRED');
   await mkdir(input.directory, { recursive: true, mode: 0o700 });
   const sourcePath = path.join(input.directory, 'containment.cs');
-  const scriptPath = path.join(input.directory, 'containment.ps1');
   const specPath = path.join(input.directory, 'containment.json');
   const receiptPath = path.join(input.directory, 'containment.receipt.json');
   const cancelPath = path.join(input.directory, 'containment.cancel');
   await writeFile(sourcePath, windowsContainedProcessSource, { flag: 'wx', mode: 0o600 });
-  await writeFile(scriptPath, containedLaunchScript, { flag: 'wx', mode: 0o600 });
   await writeFile(specPath, JSON.stringify({ executable: input.executable, arguments: input.args, cwd: input.cwd, timeoutMs: input.timeoutMs, windowsVerbatimArguments: input.windowsVerbatimArguments === true }), { flag: 'wx', mode: 0o600 });
   const systemRoot = process.env.SystemRoot;
   if (systemRoot === undefined || !path.isAbsolute(systemRoot)) throw new Error('WINDOWS_CONTAINMENT_HOST_UNAVAILABLE');
+  const directoryToken = Buffer.from(input.directory, 'utf8').toString('base64');
+  const command = `$Directory=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${directoryToken}'))\n${containedLaunchCommand}`;
   return {
     executable: path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-    args: ['-NoProfile', '-NonInteractive', '-File', scriptPath, input.directory],
+    args: ['-NoProfile', '-NonInteractive', '-Command', command],
     receiptPath,
     cancelPath,
   };
@@ -57,8 +57,7 @@ export async function readWindowsContainmentReceipt(filename: string): Promise<W
   } catch { return undefined; }
 }
 
-const containedLaunchScript = String.raw`param([string]$Directory)
-$ErrorActionPreference='Stop'
+const containedLaunchCommand = String.raw`$ErrorActionPreference='Stop'
 $job=$null
 try {
  Add-Type -Path (Join-Path $Directory 'containment.cs')
